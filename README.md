@@ -14,3 +14,5 @@ Using these python files, fake generated Fast Radio Bursts can be injected in an
 - the folder `inject_pulse` will retain all information of the previous run, but will get overwritten when a new burst is being made. 
 
 With this, you are able to create thousand real .h5 candidates to retrain the convolutional neural network FETCH.  
+
+With the box_##.py files, it is possible to find the basic burst parameters. The box_dm_time.py file acts as a safety net for FETCH.
