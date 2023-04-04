@@ -4,18 +4,19 @@ import glob
 import matplotlib.gridspec as gridspec
 import your
 import pandas as pd
+import math
 
+from scipy import signal
 from presto import filterbank
 from your import Your
 from tqdm import trange
 from will import create, inject
 from matplotlib.patches import Rectangle
 from your.formats.filwriter import make_sigproc_object
-from scipy import signal
 import time
 
 
-def box_burst(burstid, pulse, dm, start_pulse, mask, new_select):
+def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new_select, outdir, begin_t, downsampled, plot = False):
     """ Place a box around a transient signal in the input fil file
     :param pulse: filterbank file with transient signal to place a box over
     :param dm: the dm of the puls
@@ -23,9 +24,6 @@ def box_burst(burstid, pulse, dm, start_pulse, mask, new_select):
     :param mask: the mask txt file which indicates which channels to zap
     :return:
     """
-    dynspec,dynspec_off,tres,fres,begin_bin,freqs,real_burst=loaddata(pulse, start_pulse, DM=dm, maskfile=mask)
-    outdir = '/home/konijn/box_burst/results/'+str(burstid)+'_'
-
     # remove the masked channels from the data
     mask_chans = np.unique(np.where(dynspec== 0)[0])
     deleted_channels = np.delete(dynspec, mask_chans, axis=0)
@@ -37,60 +35,63 @@ def box_burst(burstid, pulse, dm, start_pulse, mask, new_select):
     for fr in range(deleted_channels.shape[0]):
         converted_snr_burst[fr,:]=convert_SN(deleted_channels[fr,:],off_burst[fr,:])
 
-    # Define kernel for convolution
-    kernel = np.ones([10,20])
-    # Perform 2D convolution with input data and kernel
-    burst = signal.convolve2d(converted_snr_burst, kernel, mode='same')/kernel.sum()
-    # select only the 2.5% brightest part of the averaged burst
-    simplified_burst = np.array([burst > np.percentile(burst.flatten(),95)]).astype(int)[0]
-    small_burst = np.array([burst > np.percentile(burst.flatten(),99)]).astype(int)[0]
+    np.savetxt(str(burstid)+'_converted_snr_dynspec.csv', converted_snr_burst, delimiter=",")
 
-    #load_data will always put the burst at this location, so we can easily take this as an initial guess
-    burst_loc_x = 3183
+    x_loc = int(((best_box[1]+best_box[0])/2)) - begin_t
 
-    burst_xwidth = max(np.sum(small_burst, axis=1))
-    burst_ywidth = max(np.sum(small_burst, axis=0))
+    box_burst_dynspec = np.array(list(converted_snr_burst))
+    box_burst_dynspec[np.argmax(np.sum(box_burst_dynspec, axis=1))] = 0
+
     max_value = 0
+    if downsampled:
+        for i in range(box_burst_dynspec.shape[0]):
+            for j in range(box_burst_dynspec.shape[0]-i):
+                for k in range(5):
+                    box_x_l = x_loc-(2**(k+6))
+                    box_x_r = x_loc+(2**(k+6))
+                    box_y_b = 0+i
+                    box_y_t = box_burst_dynspec.shape[0]-j
 
-    best_indices = [0, 0, 0, 0]
-    print("Determine optimal box location:")
-    for i in range(20):
-        ywidth = burst_ywidth+i*4
-        for j in range(20):
-            xwidth = burst_xwidth+j*30
-            for k in range(20):
-                box_y = ywidth + 5*k
-
-                if box_y > burst.shape[0]:
-                    box_y = burst.shape[0]
-                    if k > 0:
-                        break
-
-                for l in range(20):
-                    box_x = (burst_loc_x-xwidth//2)+(l-10)*20
-                    box_intens = np.sum(simplified_burst[box_y-ywidth:box_y,
-                                        box_x:box_x+xwidth])/(xwidth*ywidth)**(0.5)
-
+                    box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
                     if box_intens >= max_value:
                         max_value = box_intens
-                        best_indices = [box_x,box_x+xwidth,box_y-ywidth,box_y]
+                        best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
 
-    box_x_left, box_x_right, box_y_bottom, box_y_top = best_indices
-    for i in range(20):
-        box_x_l = box_x_left + (i-10)*10
-        for j in range(20):
-            box_x_r = box_x_right + (j-10)*10
-            if (box_x_r-box_x_l) > 0:
-                for k in range(10):
-                    box_y_b = box_y_bottom + k-5
-                    for l in range(10):
-                        box_y_t = box_y_top + l-5
-                        if box_y_t-box_y_b > 0:
-                            box_intens = np.sum(simplified_burst[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5)
+        for i in range(2**7):
+            for j in range(2**7 - i):
+                box_x_l = x_loc-10**10 + i*16
+                box_x_r = x_loc+10**10 - j*16
+                box_y_b = best_indices[2]
+                box_y_t = best_indices[3]
 
-                            if box_intens >= max_value:
-                                max_value = box_intens
-                                best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                if box_intens >= max_value:
+                    max_value = box_intens
+                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+    else:
+        for i in range(box_burst_dynspec.shape[0]):
+            for j in range(box_burst_dynspec.shape[0]-i):
+                box_x_l = x_loc-heimdall_width
+                box_x_r = x_loc+heimdall_width
+                box_y_b = 0+i
+                box_y_t = box_burst_dynspec.shape[0]-j
+
+                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                if box_intens >= max_value:
+                    max_value = box_intens
+                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+
+        for i in range(heimdall_width//2):
+            for j in range(heimdall_width//2-i):
+                box_x_l = x_loc-heimdall_width*2 + i*8
+                box_x_r = x_loc+heimdall_width*2 - j*8
+                box_y_b = best_indices[2]
+                box_y_t = best_indices[3]
+
+                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                if box_intens >= max_value:
+                    max_value = box_intens
+                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
 
     profile_burst = np.mean(converted_snr_burst[:,best_indices[0]:best_indices[1]],axis=0)
     profile_off = np.mean(off_burst[:,0:best_indices[0]-best_indices[1]],axis=0)
@@ -107,56 +108,12 @@ def box_burst(burstid, pulse, dm, start_pulse, mask, new_select):
         if mask_chans[i]<=best_indices[3]:
             best_indices[3] += 1
 
-        simplified_burst = np.insert(simplified_burst, mask_chans[i], 0, axis=0)
-        burst = np.insert(burst, mask_chans[i], 0, axis=0)
-        converted_snr_burst = np.insert(converted_snr_burst, mask_chans[i], 0, axis=0)
-        off_burst = np.insert(off_burst, mask_chans[i], 0, axis=0)
-
-    plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,best_indices,tres, freqs,outdir,mask_chans, new_select, snr, 'Boxed_fulldynspec')
-    plot_boxxed_dynspec(simplified_burst, converted_snr_burst,best_indices,tres, freqs,outdir,mask_chans, new_select, snr, 'Boxed_simpledynspec')
-
-    return best_indices, dynspec, snr, off_burst, tres, fres, fluence
-
-def rfi_burst(burstid, pulse, dm, start_pulse, mask, new_select):
-    """ Place a box around a transient signal in the input fil file
-    :param pulse: filterbank file with transient signal to place a box over
-    :param dm: the dm of the puls
-    :param start_pulse: the startbin of the pulse
-    :param mask: the mask txt file which indicates which channels to zap
-    :return:
-    """
-    dynspec,dynspec_off,tres,fres,begin_bin,freqs,real_burst,middle,top_right,top_left,bottom_right,bottom_left,max_intens=loaddata(pulse, start_pulse, DM=dm, maskfile=mask)
-    outdir = '/home/konijn/box_burst/results/rfi/'+str(burstid)+'_'
-
-    try:
-        dynspec=dynspec.reshape(dynspec.shape[0], dynspec.shape[-1]//5, 5).sum(axis=2)
-    except ValueError:
-        print("weird_shape, idk")
-
-    # remove the masked channels from the data
-    mask_chans = np.unique(np.where(dynspec== 0)[0])
-    deleted_channels = np.delete(dynspec, mask_chans, axis=0)
-
-    off_burst = deleted_channels[:, len(deleted_channels[0])//2 + 300//5:]
-
-    converted_snr_burst = np.zeros_like(deleted_channels)
-
-    for fr in range(deleted_channels.shape[0]):
-        converted_snr_burst[fr,:]=convert_SN(deleted_channels[fr,:],off_burst[fr,:])
-
-    # reinject the masked channels
-    for i in range(len(mask_chans)):
         converted_snr_burst = np.insert(converted_snr_burst, mask_chans[i], 0, axis=0)
 
-    profile_burst = np.mean(converted_snr_burst[:,480:800],axis=0)
-    profile_off = np.mean(off_burst[:,0:480-800],axis=0)
-    profile_burst = convert_SN(profile_burst , profile_off)
+    if plot:
+        plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir, mask_chans, new_select, snr, 'Boxed_fulldynspec', burstid)
 
-    snr = np.sum(profile_burst)/np.sqrt(800-480)
-
-    plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,[480,800,0,128],tres, freqs,outdir,mask_chans, new_select, snr, 'rfi_fulldynspec')
-
-    return
+    return best_indices, dynspec, snr, tres, fres, fluence
 
 def candidate_lilo_link(lilo_number):
     lilo_list = sorted(glob.glob('/data/hewitt/sharing/'+lilo_number+'/lilo*'))
@@ -188,7 +145,7 @@ def candidate_lilo_link(lilo_number):
 
     return all_model_candidates, prob_array, label_array
 
-def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,tres,freqs,outdir,mask_chans, new_select, snr, name):
+def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, name, burstid):
     fig = plt.figure(figsize=(12, 12))
     rows=2
     cols=2
@@ -218,9 +175,9 @@ def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,tres,freqs,outd
 
     ax2 = fig.add_subplot(gs[1,0],sharex=ax1) # Dynamic spectrum
     if new_select:
-        ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 95))
+        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 95))
     else:
-        ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 99))
+        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 99))
 
     for i in range(len(mask_chans)):
         ax2.axhline(mask_chans[i], linewidth=4, c='w', zorder = 1)
@@ -243,7 +200,8 @@ def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,tres,freqs,outd
     legend = ax3.legend(loc='upper center', facecolor='white',  title='SNR: '+str(np.round(snr,1)))
     legend.get_frame().set_alpha(1)
     ax3.set_ylim(-len(freqs),1)
-    plt.savefig(outdir+name+'.png',format='png',dpi=80)
+    fig.colorbar(im, orientation='vertical')
+    plt.savefig(outdir+'/B%s_'%burstid+name+'.pdf',format='pdf',dpi=80)
     plt.show()
     plt.close()
 
@@ -330,7 +288,197 @@ def dedispersets(original_burst, frequencies, dms):
         ts += np.concatenate([original_burst[-delay_bins[ii]:, ii], original_burst[:-delay_bins[ii], ii]])
     return ts
 
-def loaddata(filename, t_burst, DM=0, maskfile=None, window=100, dmtime_anaylsis=False, burstcounter = 0, burstname= 'nan', plot = False):
+def find_dm_trial_distance(best_indices, frequencies, dm, sddm_limit):
+    w_ms = (best_indices[1] - best_indices[0])*1.6e-2
+    v_mhz = (best_indices[3] - best_indices[2])*4
+    v_ghz = (frequencies[-1] - ((best_indices[3] + best_indices[2])/2)*(frequencies[1]-frequencies[0]))/1000
+
+    s_ddm_s = 1
+    dm_trial = 1
+
+    while s_ddm_s > sddm_limit:
+        zeta = 6.91*10**(-3) * dm_trial * (v_mhz /(w_ms*v_ghz**3))
+        s_ddm_s = ((np.pi)**0.5/(2)) * (1/zeta) * math.erf(zeta)
+        dm_trial += 1
+        if int((dm-dm_trial)*(256/(2*dm))) < 0:
+            dm_trial = dm-(math.ceil((2*dm*0)/256))
+            s_ddm_s = 0
+
+    return dm_trial
+
+def delta_t_dm(DM, delta_f, f):
+    #Pulsar handbook dispersive delay across a frequency channel of width delta_f, units in MHz
+    return 2*4.148808*10**6 * DM * delta_f * f**(-3)
+
+def dm_time_toa(arr_not_dedispersed, frequencies, DM, bt, tsamp):
+    locx=int(bt/tsamp)
+
+    box_width = 1830
+    box_height = 30
+
+    if DM > 150:
+        dm_list = DM + np.linspace(-150, 150, 256)
+        dm_time = np.zeros((256, arr_not_dedispersed.shape[1]), dtype=np.float32)
+
+        for ii, dm in enumerate(dm_list):
+            dm_time[ii, :] = dedispersets(arr_not_dedispersed, frequencies, dms=dm)
+
+        dm_time -= np.median(dm_time)
+        dm_time /= np.max(dm_time)
+
+        locy=128
+
+    else:
+        dm_list = np.linspace(0, 320, 256)
+        dm_time = np.zeros((256, arr_not_dedispersed.shape[1]), dtype=np.float32)
+
+        for ii, dm in enumerate(dm_list):
+            dm_time[ii, :] = dedispersets(arr_not_dedispersed, frequencies, dms=dm)
+
+        dm_time -= np.median(dm_time)
+        dm_time /= np.max(dm_time)
+
+        locy= int((DM)*(256/320))
+
+    max_power_middle = 0
+    best_box=[locx-box_width//6,locx+box_width//6]
+    #shift the dm_time box horizontally to find highest power.
+    for i in range(101):
+        left_barrier = locx + (i-50)*box_width//60
+        right_barrier = left_barrier + box_width//3
+
+        middle = np.average(dm_time[locy-box_height//6:locy+box_height//6,left_barrier:right_barrier].flatten())
+        if middle > max_power_middle:
+            max_power_middle = middle
+            best_box=[left_barrier,right_barrier]
+
+    return best_box, dm_time
+
+def dm_time_analysis(arr_not_dedispersed, best_indices, dm_trial, dmtrial_height, frequencies, DM, bt, tsamp, burstcounter, outdir, begin_t, plot = False):
+    best_indices = np.array(best_indices) + begin_t
+    locx=int(((best_indices[1]+best_indices[0])/2))
+
+    box_width = best_indices[1] - best_indices[0]
+    box_height = int(10 + dmtrial_height)
+    max_rfi_top_band = 0
+    real_burst = False
+
+    if DM > 150:
+        dm_list = DM + np.linspace(-150, 150, 256)
+        dm_time = np.zeros((256, arr_not_dedispersed.shape[1]), dtype=np.float32)
+
+        for ii, dm in enumerate(dm_list):
+            dm_time[ii, :] = dedispersets(arr_not_dedispersed, frequencies, dms=dm)
+
+        dm_time -= np.median(dm_time)
+        dm_time /= np.max(dm_time)
+
+        #assuming a burst width of 250 MHz
+        roll_list = np.round((delta_t_dm(dm_list, 250, np.flip(frequencies)[(best_indices[3]+best_indices[2])//2 - begin_t]))/(1.6e-2)).astype("int64")
+
+        for i in range(len(dm_time)):
+            dm_time[i] = np.roll(dm_time[i], roll_list[i])
+
+        locx += np.round((delta_t_dm(DM, 250, np.flip(frequencies)[(best_indices[3]+best_indices[2])//2 - begin_t]))/(1.6e-2)).astype("int64")
+
+        #calculate the 0dm RFI band delay
+        dt_top_band = (4148808.0*(DM-dm_trial)*(1/(frequencies[-1])**2-1/(frequencies)**2)/1000)
+        db_top_band = np.round(dt_top_band/(1.6e-5)).astype("int64")
+
+        dt_middle = (4148808.0*DM*(1/(frequencies[-1])**2-1/(frequencies)**2)/1000)
+        db_middle = np.round(dt_middle/(1.6e-5)).astype("int64")
+
+        locy=128
+
+        dm0_range_left = locx
+        dm0_range_right = (db_top_band[0]-db_middle[0]+locx)
+        for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+1)):
+            rfi_top_band_1 = np.average(dm_time[int((DM-dm_trial)*(256/(2*DM))):int((DM-dm_trial)*(256/(2*DM)))+box_height//3,int(dm0_range_left+i*(box_width)):int(dm0_range_left+(i+1)*(box_width))])
+            rfi_top_band_2 = np.average(dm_time[int((DM-dm_trial)*(256/(2*DM))):int((DM-dm_trial)*(256/(2*DM)))+box_height//3,int(dm0_range_left-(box_width//2)+i*(box_width)):int(dm0_range_left-(box_width//2)+(i+1)*(box_width))])
+            rfi_top_band = max(rfi_top_band_1,rfi_top_band_2)
+            if rfi_top_band>max_rfi_top_band:
+                max_rfi_top_band = rfi_top_band
+
+    else:
+        dm_list = np.linspace(0, 320, 256)
+        dm_time = np.zeros((256, arr_not_dedispersed.shape[1]), dtype=np.float32)
+
+        for ii, dm in enumerate(dm_list):
+            dm_time[ii, :] = dedispersets(arr_not_dedispersed, frequencies, dms=dm)
+
+        dm_time -= np.median(dm_time)
+        dm_time /= np.max(dm_time)
+
+        roll_list = np.round((delta_t_dm(dm_list, 250, frequencies[(best_indices[3]+best_indices[2])//2]))/(1.6e-2)).astype("int64")
+
+        for i in range(len(dm_time)):
+            dm_time[i] = np.roll(dm_time[i], roll_list[i])
+
+        #calculate the 0dm RFI band delay
+        dt_middle = (4148808.0*DM*(1/(frequencies[-1])**2-1/(frequencies)**2)/1000)
+        db_middle = np.round(dt_middle/(1.6e-5)).astype("int64")
+
+        dt_bottom_band = (4148808.0*(DM+dm_trial)*(1/(frequencies[-1])**2-1/(frequencies)**2)/1000)
+        db_bottom_band = np.round(dt_bottom_band/(1.6e-5)).astype("int64")
+
+        locy= int((DM)*(256/320))
+        locx += np.round((delta_t_dm(DM, 250, np.flip(frequencies)[(best_indices[3]+best_indices[2])//2 - begin_t]))/(1.6e-2)).astype("int64")
+
+        dm0_range_left = (locx+db_bottom_band[0]-db_middle[0])
+        dm0_range_right = locx
+
+        if dm0_range_left < 0:
+            dm0_range_left = 0
+            dm0_range_right = locx
+
+        #NOTE might be flawed, check when time. Depends on the arangement of the #:$ -> $:#
+        for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+1)):
+            rfi_top_band1 = np.average(dm_time[int((DM+dm_trial)*(256/320)):int((DM+dm_trial)*(256/320))-box_height//3,int(dm0_range_left+i*(box_width)):int(dm0_range_left+(i+1)*(box_width))])
+            rfi_top_band2 = np.average(dm_time[int((DM+dm_trial)*(256/320)):int((DM+dm_trial)*(256/320))-box_height//3,int(dm0_range_left-(box_width//2)+i*(box_width)):int(dm0_range_left-(box_width//2)+(i+1)*(box_width))])
+            rfi_top_band = max(rfi_top_band1,rfi_top_band2)
+
+            if rfi_top_band>max_rfi_top_band:
+                max_rfi_top_band = rfi_top_band
+
+    max_power_middle = np.average(dm_time[locy-box_height//6:locy+box_height//6,locx-box_width//2:locx+box_width//2].flatten())
+    if max_power_middle > 1.25*max_rfi_top_band:
+        print('Burst Found whoo')
+        real_burst = True
+
+    if plot:
+        plt.figure(figsize=(12,8))
+        im = plt.imshow(dm_time, aspect='auto', vmin = np.percentile(dm_time, 35), vmax = np.percentile(dm_time, 85))
+        plt.xlabel('Time', fontsize = 14)
+
+        if DM > 150:
+            plt.yticks(np.linspace(0,256,9), labels=np.round(np.linspace(DM-150, DM+150,9),0))
+            for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+2)):
+                plt.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[int((DM-dm_trial)*(256/(2*DM)))+box_height//3, int((DM-dm_trial)*(256/(2*DM)))],linestyle='--', color='r')
+                plt.plot([dm0_range_left-(box_width//2)+i*(box_width),dm0_range_left-(box_width//2)+i*(box_width)],[int((DM-dm_trial)*(256/(2*DM)))+box_height//3, int((DM-dm_trial)*(256/(2*DM)))],linestyle='--', color='pink')
+                max_right = dm0_range_left+i*(box_width)
+
+            plt.plot([dm0_range_left,max_right],[int((DM-dm_trial)*(256/(2*DM))), int((DM-dm_trial)*(256/(2*DM)))],linestyle='--', color='r')
+            plt.plot([dm0_range_left,max_right],[int((DM-dm_trial)*(256/(2*DM)))+box_height//3, int((DM-dm_trial)*(256/(2*DM)))+box_height//3],linestyle='--', color='r')
+
+        else:
+            plt.yticks(np.linspace(0,256,9), labels=np.round(np.linspace(0,320,9),0))
+
+            for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+2)):
+                plt.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[int((DM+dm_trial)*(256/320)),int((DM+dm_trial)*(256/320))-box_height//3],linestyle='--', color='r')
+                max_right = dm0_range_left+i*(box_width)
+
+            plt.plot([dm0_range_left,max_right],[int((DM+dm_trial)*(256/320)), int((DM+dm_trial)*(256/320))],linestyle='--', color='r')
+            plt.plot([dm0_range_left,max_right],[int((DM+dm_trial)*(256/320))-box_height//3, int((DM+dm_trial)*(256/320))-box_height//3],linestyle='--', color='r')
+
+        plt.colorbar(im)
+        plt.plot([locx-(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2],[locy-box_height//6,locy+box_height//6,locy+box_height//6,locy-box_height//6,locy-box_height//6], color='r')
+        plt.ylabel('Trial DM', fontsize = 14)
+        plt.savefig(outdir+'/B%s_'%burstcounter + 'DM_time.pdf',format='pdf',dpi=100)
+        plt.close()
+
+    return max_rfi_top_band, real_burst, max_power_middle
+
+def loaddata(filename, t_burst, DM=0, maskfile=None, window=100):
     """
     Reads in the filterbank file into a numpy array, applies the mask
     and outputs the burst dynamic spectrum as a numpy array.
@@ -347,8 +495,7 @@ def loaddata(filename, t_burst, DM=0, maskfile=None, window=100, dmtime_anaylsis
     """
 
     #NOTE dsoff size has been reduced by a factor of 5 to reduce the time it takes to load the burst
-    ds,extent,tsamp,begbin, arr_not_dedispersed=load_filterbank(filename,dm=DM,fullpol=False,burst_time=t_burst)
-    real_burst = False
+    ds,extent,tsamp,begbin,arr_not_dedispersed,bt=load_filterbank(filename,dm=DM,fullpol=False,burst_time=t_burst)
 
     dsoff = ds[:, len(ds[0])//2 + 300:]
     StokesI_ds = np.zeros_like(ds)
@@ -377,101 +524,7 @@ def loaddata(filename, t_burst, DM=0, maskfile=None, window=100, dmtime_anaylsis
         arr_not_dedispersed[maskchans,:]=0
         StokesI_off[maskchans,:]=0
 
-    middle=np.nan
-    top_right=np.nan
-    top_left=np.nan
-    bottom_right=np.nan
-    bottom_left=np.nan
-    max_intens=np.nan
-
-    if dmtime_anaylsis:
-        dm_list = 220 + np.linspace(-100, 100, 256)
-        dm_time = np.zeros((256, arr_not_dedispersed.shape[1]), dtype=np.float32)
-
-        for ii, dm in enumerate(dm_list):
-            dm_time[ii, :] = dedispersets(arr_not_dedispersed, frequencies, dms=dm)
-
-        dm_time -= np.median(dm_time)
-        dm_time /= np.max(dm_time)
-
-        outdir = '/home/konijn/box_burst/dmtime/time_dm_plots'
-        dm_heim = float(burstname.split('_')[-3])
-
-        locx=3183
-        locy=int((dm_heim-110)*(256/220))
-
-        box_width = 2000
-        box_height = 30
-
-        top_band = []
-        second_band = []
-        third_band = []
-        middle_band = []
-        fourth_band = []
-        fifth_band = []
-        bottom_band = []
-
-        top_band.append(dm_time[locy-box_height-box_height//6:locy-box_height+box_height//6,locx-box_width:locx+box_width].flatten())
-        top_band = np.average(top_band)
-
-        second_band.append(dm_time[locy-box_height//3*2-box_height//6:locy-box_height//3*2+box_height//6,locx-box_width+box_width//4:locx+box_width-box_width//4].flatten())
-        second_band = np.average(second_band)
-
-        third_band.append(dm_time[locy-box_height//3-box_height//6:locy-box_height//3+box_height//6,locx-box_width+box_width//2:locx+box_width-box_width//2].flatten())
-        third_band = np.average(third_band)
-
-        middle_band.append(dm_time[locy-box_height//6:locy+box_height//6,locx-box_width//4:locx+box_width//4].flatten())
-        middle_band = np.average(middle_band)
-
-        fourth_band.append(dm_time[locy+box_height//3-box_height//6:locy+box_height//3+box_height//6,locx-box_width+box_width//2:locx+box_width-box_width//2].flatten())
-        fourth_band = np.average(fourth_band)
-
-        fifth_band.append(dm_time[locy+box_height//3*2-box_height//6:locy+box_height//3*2+box_height//6,locx-box_width+box_width//4:locx+box_width-box_width//4].flatten())
-        fifth_band = np.average(fifth_band)
-
-        bottom_band.append(dm_time[locy+box_height-box_height//6:locy+box_height+box_height//6,locx-box_width:locx+box_width].flatten())
-        bottom_band = np.average(bottom_band)
-
-        max_intens = 0
-
-        for i in range(13):
-            average_intensity = np.average(dm_time[0:box_height//3,i*1000:(i+1)*1000])
-            if average_intensity>max_intens:
-                max_intens = average_intensity
-
-        # if middle > 1.6*top_right and middle > 1.716666666*bottom_left:
-        #     if top_right > 0*top_left and bottom_left > 0.26666666*bottom_right:
-        #         if middle > 3*max_intens:
-        #             real_burst = True
-
-        if plot:
-            plt.figure(figsize=(12,8))
-            im = plt.imshow(dm_time, aspect='auto', vmin = np.percentile(dm_time, 35), vmax = np.percentile(dm_time, 85))
-            plt.xlabel('Time', fontsize = 14)
-            plt.yticks(np.linspace(0,256,9), labels=np.round(np.linspace(110,330,9),0))
-            plt.colorbar(im)
-            plt.axvline(x=locx-box_width//4, linestyle='--', color='k')
-            plt.axvline(x=locx-box_width//2, linestyle='--', color='k')
-            plt.axvline(x=locx+box_width//4, linestyle='--', color='k')
-            plt.axvline(x=locx+box_width//2, linestyle='--', color='k')
-            plt.axvline(x=locx-box_width//4*3, linestyle='--', color='k')
-            plt.axvline(x=locx+box_width//4*3, linestyle='--', color='k')
-            plt.axvline(x=locx, linestyle='--', color='k')
-            plt.axhline(y=locy+box_height//3+box_height//6, linestyle='--', color='k')
-            plt.axhline(y=locy+box_height//3*2+box_height//6, linestyle='--', color='k')
-            plt.axhline(y=locy+box_height+box_height//6, linestyle='--', color='k')
-            plt.axhline(y=locy+box_height//6, linestyle='--', color='k')
-            plt.axhline(y=locy-box_height//6, linestyle='--', color='k')
-            plt.axhline(y=locy-box_height//3-box_height//6, linestyle='--', color='k')
-            plt.axhline(y=locy-box_height//3*2-box_height//6, linestyle='--', color='k')
-            plt.axhline(y=locy-box_height-box_height//6, linestyle='--', color='k')
-            plt.plot([locx-box_width, locx-box_width, locx+box_width, locx+box_width, locx-box_width],[locy-box_height-box_height//6,locy+box_height+box_height//6,locy+box_height+box_height//6,locy-box_height-box_height//6,locy-box_height-box_height//6], color='r')
-            plt.ylabel('Trial DM', fontsize = 14)
-            plt.savefig(outdir+'/B%s_'%burstcounter + 'DM_time' +'_Dynamic_Spectrum.pdf',format='pdf',dpi=100)
-            plt.close()
-
     #chop out window
-
     binwind=int(window/(tsamp*1000.))
     begin_t=int(t_burst/tsamp)-begbin - binwind
     end_t=int(t_burst/tsamp)-begbin +binwind
@@ -484,7 +537,7 @@ def loaddata(filename, t_burst, DM=0, maskfile=None, window=100, dmtime_anaylsis
     StokesI_ds=StokesI_ds[:,begin_t:end_t]
     begbin=begbin+begin_t
 
-    return np.flip(StokesI_ds,axis=0), StokesI_off, tsamp, freqres, begbin, frequencies, real_burst, top_band,second_band,third_band,middle_band,fourth_band,fifth_band,bottom_band, max_intens
+    return np.flip(StokesI_ds,axis=0), StokesI_off, tsamp, freqres, begbin, frequencies, bt,arr_not_dedispersed, begin_t
 
 def plot_ds(burstid, ds, outdir, name):
     plt.figure(figsize=(12,8))
@@ -521,17 +574,25 @@ def load_filterbank(filterbank_name,dm=None,fullpol=False,burst_time=None):
 
     #consider how much delay the DM would cause
     tdel=np.abs(4.149377593360996e-3*dm*((1./np.min(fil.frequencies/1000.)**2)-(1./np.max(fil.frequencies/1000.)**2))) #seconds
+    bt=250e-3
 
-    if (burst_bin-int(50e-3/tsamp)+int(200e-3/tsamp) < fil.nspec) & (burst_bin-int(50e-3/tsamp) >= 0):
-        spec = fil.get_spectra(burst_bin-int(50e-3/tsamp),int(2*tdel/tsamp))
-        begbin=burst_bin-int(50e-3/tsamp)
-    elif burst_bin-int(50e-3/tsamp) < 0:
-        spec = fil.get_spectra(0,int(2*tdel/tsamp))
+    if int(2*tdel/tsamp) < 60000:
+        t_duration = 60000
+    elif int(2*tdel/tsamp) > 60000:
+        t_duration = int(1.5*tdel/tsamp)
+
+    if (burst_bin-int(250e-3/tsamp)+int(250e-3/tsamp) < fil.nspec) & (burst_bin-int(250e-3/tsamp) >= 0):
+        spec = fil.get_spectra(burst_bin-int(250e-3/tsamp),t_duration)
+        begbin=burst_bin-int(250e-3/tsamp)
+
+    elif burst_bin-int(250e-3/tsamp) < 0:
+        spec = fil.get_spectra(0,t_duration)
+        bt = burst_bin*tsamp
         begbin=0
     else:
-        dur = fil.nspec - (burst_bin-int(50e-3/tsamp))
-        spec = fil.get_spectra(burst_bin-int(50e-3/tsamp),dur)
-        begbin=burst_bin-int(50e-3/tsamp)
+        dur = fil.nspec - (burst_bin-int(250e-3/tsamp))
+        spec = fil.get_spectra(burst_bin-int(250e-3/tsamp),dur)
+        begbin=burst_bin-int(250e-3/tsamp)
 
     arr_not_dedispersed=np.array(list(spec.data))
 
@@ -559,4 +620,4 @@ def load_filterbank(filterbank_name,dm=None,fullpol=False,burst_time=None):
     fch_bottom = fch_top+foff-(nchans*foff)
     extent = (begintime,endtime,fch_bottom,fch_top)
 
-    return arr, extent, tsamp, begbin, arr_not_dedispersed
+    return arr, extent, tsamp, begbin, arr_not_dedispersed, bt
