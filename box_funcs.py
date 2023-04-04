@@ -310,6 +310,10 @@ def delta_t_dm(DM, delta_f, f):
     #Pulsar handbook dispersive delay across a frequency channel of width delta_f, units in MHz
     return 2*4.148808*10**6 * DM * delta_f * f**(-3)
 
+def delta_t(DM, fref, fchan):
+    #Pulsar handbook dispersive delay between two frequencies in MHz
+    return 4.148808*10**6 * (fref**(-2) - fchan**(-2)) * DM
+
 def dm_time_toa(arr_not_dedispersed, frequencies, DM, bt, tsamp):
     locx=int(bt/tsamp)
 
@@ -355,16 +359,17 @@ def dm_time_toa(arr_not_dedispersed, frequencies, DM, bt, tsamp):
     return best_box, dm_time
 
 def dm_time_analysis(arr_not_dedispersed, best_indices, dm_trial, dmtrial_height, frequencies, DM, bt, tsamp, burstcounter, outdir, begin_t, plot = False):
+    center_burst = np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]
     best_indices = np.array(best_indices) + begin_t
     locx=int(((best_indices[1]+best_indices[0])/2))
 
     box_width = best_indices[1] - best_indices[0]
-    box_height = int(10 + dmtrial_height)
+    box_height = dmtrial_height
     max_rfi_top_band = 0
     real_burst = False
 
     if DM > 150:
-        dm_list = DM + np.linspace(-150, 150, 256)
+        dm_list = DM + np.linspace(-DM, DM, 256)
         dm_time = np.zeros((256, arr_not_dedispersed.shape[1]), dtype=np.float32)
 
         for ii, dm in enumerate(dm_list):
@@ -374,12 +379,12 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, dm_trial, dmtrial_height
         dm_time /= np.max(dm_time)
 
         #assuming a burst width of 250 MHz
-        roll_list = np.round((delta_t_dm(dm_list, 250, np.flip(frequencies)[(best_indices[3]+best_indices[2])//2 - begin_t]))/(1.6e-2)).astype("int64")
+        roll_list = np.round(delta_t(dm_list, center_burst, frequencies[-1])/(1.6e-2)).astype("int64")
 
         for i in range(len(dm_time)):
             dm_time[i] = np.roll(dm_time[i], roll_list[i])
 
-        locx += np.round((delta_t_dm(DM, 250, np.flip(frequencies)[(best_indices[3]+best_indices[2])//2 - begin_t]))/(1.6e-2)).astype("int64")
+        locx += np.round(delta_t(DM, center_burst, frequencies[-1])/(1.6e-2)).astype("int64")
 
         #calculate the 0dm RFI band delay
         dt_top_band = (4148808.0*(DM-dm_trial)*(1/(frequencies[-1])**2-1/(frequencies)**2)/1000)
@@ -409,7 +414,7 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, dm_trial, dmtrial_height
         dm_time -= np.median(dm_time)
         dm_time /= np.max(dm_time)
 
-        roll_list = np.round((delta_t_dm(dm_list, 250, frequencies[(best_indices[3]+best_indices[2])//2]))/(1.6e-2)).astype("int64")
+        roll_list = np.round(delta_t(dm_list, center_burst, frequencies[-1])/(1.6e-2)).astype("int64")
 
         for i in range(len(dm_time)):
             dm_time[i] = np.roll(dm_time[i], roll_list[i])
@@ -422,7 +427,7 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, dm_trial, dmtrial_height
         db_bottom_band = np.round(dt_bottom_band/(1.6e-5)).astype("int64")
 
         locy= int((DM)*(256/320))
-        locx += np.round((delta_t_dm(DM, 250, np.flip(frequencies)[(best_indices[3]+best_indices[2])//2 - begin_t]))/(1.6e-2)).astype("int64")
+        locx += np.round(delta_t(DM, center_burst, frequencies[-1])/(1.6e-2)).astype("int64")
 
         dm0_range_left = (locx+db_bottom_band[0]-db_middle[0])
         dm0_range_right = locx
@@ -469,7 +474,7 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, dm_trial, dmtrial_height
 
             plt.plot([dm0_range_left,max_right],[int((DM+dm_trial)*(256/320)), int((DM+dm_trial)*(256/320))],linestyle='--', color='r')
             plt.plot([dm0_range_left,max_right],[int((DM+dm_trial)*(256/320))-box_height//3, int((DM+dm_trial)*(256/320))-box_height//3],linestyle='--', color='r')
-
+        plt.xlim(0, min(2*locx, 60000))
         plt.colorbar(im)
         plt.plot([locx-(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2],[locy-box_height//6,locy+box_height//6,locy+box_height//6,locy-box_height//6,locy-box_height//6], color='r')
         plt.ylabel('Trial DM', fontsize = 14)
