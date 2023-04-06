@@ -39,7 +39,7 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
     box_burst_dynspec[np.argmax(np.sum(box_burst_dynspec, axis=1))] = 0
 
     #sometimes Heimdall has a stroke, so set the minimum at 50
-    heimdall_width = max(heimdall_width, 50)
+    heimdall_width = min(max(heimdall_width, 50), 1024)
     max_value = 0
 
     for i in range(box_burst_dynspec.shape[0]//2):
@@ -268,7 +268,7 @@ def delta_t(DM, fref, fchan):
 def dm_time_toa(arr_not_dedispersed, frequencies, DM, bt, tsamp, heimdall_width):
     locx=int(bt/tsamp)
 
-    box_width = max(heimdall_width, 50)
+    box_width = min(max(heimdall_width, 50), 1024)
     box_height = 4
     dm_list = DM + np.linspace(-50, 50, 30)
     dm_time = np.zeros((30, arr_not_dedispersed.shape[1]), dtype=np.float32)
@@ -287,7 +287,8 @@ def dm_time_toa(arr_not_dedispersed, frequencies, DM, bt, tsamp, heimdall_width)
     for i in range(101):
         left_barrier = locx + (i-50)*box_width//2
         right_barrier = left_barrier + box_width
-        if left_barrier > 0:
+
+        if left_barrier > 0 and right_barrier < dm_time.shape[1]:
             middle = np.average(dm_time[locy-box_height//2:locy+box_height//2,left_barrier:right_barrier].flatten())
             if middle > max_power_middle:
                 max_power_middle = middle
@@ -296,8 +297,12 @@ def dm_time_toa(arr_not_dedispersed, frequencies, DM, bt, tsamp, heimdall_width)
     return best_box
 
 def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstcounter, outdir, begin_t, plot = False):
-    dmtrial_height = int(((best_indices[1]-best_indices[0])*1.6e1*2)/(8.3*(4*(best_indices[3]-best_indices[2])) * (np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]/1000)**-3 ))
-    dm_trial = max(1, int(((best_indices[1]-best_indices[0])*1.6e1*5)/(8.3*(4*(best_indices[3]-best_indices[2])) * (np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]/1000)**-3 )))
+    burst_duration = ((best_indices[1]-best_indices[0])*1.6e1) # in ms
+    burst_bandwidth = 4*(best_indices[3]-best_indices[2]) # in MHz
+    burst_central_bandwidth = (np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]/1000) # in GHz
+
+    dmtrial_height = int(2*burst_duration / (8.3 * burst_bandwidth * burst_central_bandwidth**(-3)))
+    dm_trial    = int(5*burst_duration / (8.3 * burst_bandwidth * burst_central_bandwidth**(-3)))
     dm_trial_flag = False
 
     if dmtrial_height > 75:
@@ -308,23 +313,60 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstco
 
     center_burst = np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]
     best_indices = np.array(best_indices) + begin_t
-
-    max_rfi_top_band = 1e-4
     real_burst = False
 
-    box_width = best_indices[1] - best_indices[0]
-    box_height = int(dmtrial_height // ((2*dm_trial)/128))
+    #middle power:
+    dm_list = np.linspace(DM-dmtrial_height//2, DM+dmtrial_height//2, dmtrial_height)
+    power_middle = dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices,DM, 'Middle')
 
-    #dedisperse the dataset into a dm_time array
-    dm_list = np.linspace(DM-box_height, DM+dm_trial, 128)
-    dm_time = np.zeros((128, arr_not_dedispersed.shape[1]), dtype=np.float32)
+    #top_band_power
+    dm_list = np.linspace(DM+dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2, dmtrial_height)
+    power_top = dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices,DM, 'Top')
+
+    print('Power Middle: ', power_middle)
+    print('Power Top:    ', power_top)
+
+    if plot:
+        dm_list = np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2, 128)
+        dm_time = dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices,DM, 'Plot')
+
+        locy = len(dm_list)//2
+        locx = int(((best_indices[1]+best_indices[0])/2)) + np.round(delta_t(DM, center_burst, frequencies[-1])/(1.6e-2)).astype("int64")
+
+        box_width = best_indices[1] - best_indices[0]
+        box_height = int(dmtrial_height // ((dmtrial_height+2*dm_trial)/128))
+
+        plt.figure(figsize=(12,8))
+        im = plt.imshow(dm_time, aspect='auto', vmin = np.percentile(dm_time, 35), vmax = np.percentile(dm_time, 85))
+        plt.xlabel('Time', fontsize = 14)
+
+        dm0_range_left = locx-10*box_width
+        dm0_range_right = locx+10*box_width
+        for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+2)):
+            plt.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[128,128-box_height],linestyle='--', color='r', alpha=0.6)
+            max_right = dm0_range_left+i*(box_width)
+        plt.plot([locx-(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2],[locy-box_height//2,locy+box_height//2,locy+box_height//2,locy-box_height//2,locy-box_height//2], color='r', alpha=0.6)
+        plt.plot([dm0_range_left, dm0_range_left, max_right, max_right, dm0_range_left],[128,128-box_height,128-box_height,128,128], color='r', alpha=0.6)
+        plt.xlim(0, min(2*locx, 60000))
+        plt.yticks(np.linspace(0,128,9), labels=np.round(np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2,9),0))
+        plt.colorbar(im)
+        plt.ylabel('Trial DM', fontsize = 14)
+        plt.ylim(128,0)
+        plt.savefig(outdir+'/B%s_'%burstcounter + 'DM_time.pdf',format='pdf',dpi=100)
+        plt.close()
+
+    return power_top, real_burst, power_middle, dm_trial_flag
+
+@njit
+def dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices,DM, mid_or_top):
+    box_width = best_indices[1] - best_indices[0]
+    dm_time = np.zeros((len(dm_list), arr_not_dedispersed.shape[1]), dtype=np.float32)
 
     for ii, dm in enumerate(dm_list):
         dm_time[ii, :] = dedispersets(arr_not_dedispersed, frequencies, dms=dm)
 
     dm_time -= np.median(dm_time)
     dm_time /= np.max(dm_time)
-
     #allign the burst vertically
     roll_list = np.round(delta_t(dm_list, center_burst, frequencies[-1])/(1.6e-2)).astype("int64")
 
@@ -332,48 +374,31 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstco
         dm_time[i] = np.roll(dm_time[i], roll_list[i])
 
     locx=int(((best_indices[1]+best_indices[0])/2)) + np.round(delta_t(DM, center_burst, frequencies[-1])/(1.6e-2)).astype("int64")
-    locy = box_height//2
+    locy = dmtrial_height//2
 
-    dm0_range_left = locx-10*box_width
-    dm0_range_right = locx+10*box_width
+    if mid_or_top == 'Middle':
+        max_middle = np.average(dm_time[locy-dmtrial_height//2:locy+dmtrial_height//2,locx-box_width//2:locx+box_width//2].flatten())
+        return max_middle
+    elif mid_or_top == 'Top':
+        dm0_range_left = locx-10*box_width
+        dm0_range_right = locx+10*box_width
+        max_rfi_top_band = 1e-4
 
-    for i in range(int((dm0_range_right-dm0_range_left)/(box_width))):
-        if int(dm0_range_left+i*(box_width)) > 0 and int(dm0_range_left+(i+1)*(box_width)) < dm_time.shape[1]:
-            rfi_top_band1 = np.average(dm_time[128-box_height:128,int(dm0_range_left+i*(box_width)):int(dm0_range_left+(i+1)*(box_width))])
-        else:
-            rfi_top_band1 = 1e-6
-        if int(dm0_range_left-(box_width//2)+i*(box_width)) > 0 and int(dm0_range_left-(box_width//2)+(i+1)*(box_width)) < dm_time.shape[1]:
-            rfi_top_band2 = np.average(dm_time[128-box_height:128,int(dm0_range_left-(box_width//2)+i*(box_width)):int(dm0_range_left-(box_width//2)+(i+1)*(box_width))])
-        else:
-            rfi_top_band2 = 1e-6
-        rfi_top_band = max(rfi_top_band1,rfi_top_band2)
-        if rfi_top_band>max_rfi_top_band:
-            max_rfi_top_band = rfi_top_band
-
-    max_power_middle = np.average(dm_time[locy-box_height//2:locy+box_height//2,locx-box_width//2:locx+box_width//2].flatten())
-
-    if plot:
-        plt.figure(figsize=(12,8))
-        im = plt.imshow(dm_time, aspect='auto', vmin = np.percentile(dm_time, 35), vmax = np.percentile(dm_time, 85))
-        plt.xlabel('Time', fontsize = 14)
-
-        for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+2)):
-            plt.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[128,128-box_height],linestyle='--', color='r')
-            plt.plot([int(dm0_range_left-(box_width//2)+i*(box_width)),int(dm0_range_left-(box_width//2)+(i)*(box_width))],[128,128-box_height],linestyle='--', color='orange')
-            max_right = dm0_range_left+i*(box_width)
-
-        plt.plot([dm0_range_left,max_right],[128, 128],linestyle='--', color='r')
-        plt.plot([dm0_range_left,max_right],[128-box_height, 128-box_height],linestyle='--', color='r')
-        plt.plot([locx-(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2],[locy-box_height//2,locy+box_height//2,locy+box_height//2,locy-box_height//2,locy-box_height//2], color='r')
-        plt.xlim(0, min(2*locx, 60000))
-        plt.ylim(128, 0)
-        plt.yticks(np.linspace(0,128,9), labels=np.round(np.linspace(DM-box_height, DM+dm_trial,9),0))
-        plt.colorbar(im)
-        plt.ylabel('Trial DM', fontsize = 14)
-        plt.savefig(outdir+'/B%s_'%burstcounter + 'DM_time.pdf',format='pdf',dpi=100)
-        plt.close()
-
-    return max_rfi_top_band, real_burst, max_power_middle, dm_trial_flag
+        for i in range(int((dm0_range_right-dm0_range_left)/(box_width))):
+            if int(dm0_range_left+i*(box_width)) > 0 and int(dm0_range_left+(i+1)*(box_width)) < dm_time.shape[1]:
+                rfi_top_band1 = np.average(dm_time[locy-dmtrial_height//2:locy+dmtrial_height//2,int(dm0_range_left+i*(box_width)):int(dm0_range_left+(i+1)*(box_width))])
+            else:
+                rfi_top_band1 = 1e-6
+            if int(dm0_range_left-(box_width//2)+i*(box_width)) > 0 and int(dm0_range_left-(box_width//2)+(i+1)*(box_width)) < dm_time.shape[1]:
+                rfi_top_band2 = np.average(dm_time[locy-dmtrial_height//2:locy+dmtrial_height//2,int(dm0_range_left-(box_width//2)+i*(box_width)):int(dm0_range_left-(box_width//2)+(i+1)*(box_width))])
+            else:
+                rfi_top_band2 = 1e-6
+            rfi_top_band = max(rfi_top_band1,rfi_top_band2)
+            if rfi_top_band>max_rfi_top_band:
+                max_rfi_top_band = rfi_top_band
+        return max_rfi_top_band
+    else:
+        return dm_time
 
 def loaddata(filename, t_burst, DM=0, maskfile=None, window=100):
     """
