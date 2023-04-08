@@ -26,14 +26,17 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
     # remove the masked channels from the data
     mask_chans = np.unique(np.where(dynspec== 0)[0])
     deleted_channels = np.delete(dynspec, mask_chans, axis=0)
+    x_loc = int(((best_box[1]+best_box[0])/2)) - begin_t
 
-    off_burst = deleted_channels[:, len(deleted_channels[0])//2 + 300:]
+    if len(deleted_channels[0])//2 + 300 >= x_loc:
+        off_burst = deleted_channels[:, len(deleted_channels[0])//2 + 200:]
+    else:
+        off_burst = deleted_channels[:, :len(deleted_channels[0])//2 + 200]
+
     converted_snr_burst = np.zeros_like(deleted_channels)
 
     for fr in range(deleted_channels.shape[0]):
         converted_snr_burst[fr,:]=convert_SN(deleted_channels[fr,:],off_burst[fr,:])
-
-    x_loc = int(((best_box[1]+best_box[0])/2)) - begin_t
 
     box_burst_dynspec = np.array(list(converted_snr_burst))
     # box_burst_dynspec[np.argmax(np.sum(box_burst_dynspec, axis=1))] = 0
@@ -44,15 +47,27 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
 
     for i in range(box_burst_dynspec.shape[0]//2):
         for j in range(box_burst_dynspec.shape[0]//2-i):
-            box_x_l = x_loc-heimdall_width
-            box_x_r = x_loc+heimdall_width
-            box_y_b = 0+i*2
-            box_y_t = box_burst_dynspec.shape[0]-j*2
+            if downsampled and heimdall_width == 1024:
+                 for k in range(3):
+                    box_x_l = x_loc-(2**(k+8))
+                    box_x_r = x_loc+(2**(k+8))
+                    box_y_b = 0+i*2
+                    box_y_t = box_burst_dynspec.shape[0]-j*2
 
-            box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
-            if box_intens >= max_value:
-                max_value = box_intens
-                best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+                    box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                    if box_intens >= max_value:
+                        max_value = box_intens
+                        best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+            else:
+                box_x_l = x_loc-heimdall_width
+                box_x_r = x_loc+heimdall_width
+                box_y_b = 0+i*2
+                box_y_t = box_burst_dynspec.shape[0]-j*2
+
+                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                if box_intens >= max_value:
+                    max_value = box_intens
+                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
 
     for i in range(heimdall_width//4):
         for j in range(heimdall_width//4-i):
