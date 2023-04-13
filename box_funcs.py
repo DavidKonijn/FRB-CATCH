@@ -5,6 +5,8 @@ import matplotlib.gridspec as gridspec
 import your
 import pandas as pd
 import math
+import h5py
+
 
 from presto import filterbank
 from your import Your
@@ -47,6 +49,7 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
 
     for i in range(box_burst_dynspec.shape[0]//2):
         for j in range(box_burst_dynspec.shape[0]//2-i):
+            #Heimdall sometimes makes mistakes in the downsampled version, so check for other appropriate widhts
             if downsampled and heimdall_width == 1024:
                  for k in range(3):
                     box_x_l = x_loc-(2**(k+8))
@@ -132,6 +135,62 @@ def candidate_lilo_link(lilo_number):
 
     return all_model_candidates, prob_array, label_array
 
+def remove_duplicate_candidates(burst_cands,prob_array,lilo_number):
+    unique_lilo_list = np.unique(np.array(burst_cands)[:,0])
+    double_hits = []
+    sort_all_cands = []
+
+    for j in range(len(unique_lilo_list)):
+        arrival_time = []
+        arrival_index = []
+        for k in range(len(burst_cands)):
+            if burst_cands[k][0] == unique_lilo_list[j]:
+                arrival_time.append(burst_cands[k][3].split('_')[-5])
+                arrival_index.append(k)
+
+        sorted_time = sorted(np.array(arrival_time).astype('float'))
+        sorted_index = [x for _, x in sorted(zip(np.array(arrival_time).astype('float'), arrival_index))]
+
+        for i in range(len(sorted_index)):
+            sort_all_cands.append(sorted_index[i])
+
+        for l in range(len(sorted_time)-1):
+            #check if two differently sampled candidates are within 100ms of each other, if yes then remove
+            if sorted_time[l+1] - sorted_time[l] < 0.1:
+                cand_h5_first = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/ash/"+burst_cands[sorted_index[l]][3]
+                cand_h5_second = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/ash/"+burst_cands[sorted_index[l+1]][3]
+
+                downsample_test = 0
+                with h5py.File(cand_h5_first, "r") as f:
+                    basename = f.attrs["basename"]
+                    if basename[-2] == str(8):
+                        downsample_test += 1
+                with h5py.File(cand_h5_second, "r") as f:
+                    basename = f.attrs["basename"]
+                    if basename[-2] == str(8):
+                        downsample_test += 1
+
+                if downsample_test == 1:
+                    double_hits.append([sorted_index[l+1],sorted_index[l]])
+
+    sorted_burst_cands = []
+    sorted_prob_arr = []
+
+    for i in range(len(sort_all_cands)):
+        sorted_burst_cands.append(burst_cands[sort_all_cands[i]])
+        sorted_prob_arr.append(prob_array[sort_all_cands[i]])
+
+    # sorted_close_cands = np.array(sorted(double_hits, key=lambda x : x[1]))
+
+    # remove_index_list = []
+    # for i in range(len(sorted_close_cands[:,1])):
+    #     remove_index_list.append(np.argwhere(np.array(sort_all_cands) == sorted_close_cands[:,1][i])[0][0])
+
+    # sorted_burst_cands = np.delete(sorted_burst_cands, remove_index_list, axis = 0)
+    # sorted_prob_arr = np.delete(sorted_prob_arr, remove_index_list, axis = 0)
+
+    return sorted_burst_cands, sorted_prob_arr
+
 def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, name, burstid):
     fig = plt.figure(figsize=(12, 12))
     rows=2
@@ -168,9 +227,26 @@ def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freq
 
     for i in range(len(mask_chans)):
         ax2.axhline(mask_chans[i], linewidth=4, c='w', zorder = 1)
+    props = dict(boxstyle='round', facecolor='white', alpha=1)
     ax2.add_patch(Rectangle((best_indices[0], best_indices[2]),
                             best_indices[1]-best_indices[0],
                             best_indices[3]-best_indices[2], linewidth=1.5,color = 'r', fc ='none', zorder=2))
+    ax2.add_patch(Rectangle((0,  64),
+                            1000,
+                            64, linewidth=1.5, alpha = 0.3, fc ='green', color = 'green', zorder =3))
+    ax2.text(100, 124, 'Real Burst', bbox=props)
+    ax2.add_patch(Rectangle((0,  0),
+                            1000,
+                            64, linewidth=1.5, alpha = 0.3, fc ='red', color = 'red', zorder =3))
+    ax2.text(100, 4, 'No Burst', bbox=props)
+    ax2.add_patch(Rectangle((imshow.shape[1]-1000,  64),
+                            1000,
+                            64, linewidth=1.5, alpha = 0.3, fc ='orange', color = 'orange', zorder =3))
+    ax2.text(imshow.shape[1]-2500, 124, 'Wrong Box', bbox=props)
+    ax2.add_patch(Rectangle((imshow.shape[1]-1000,  0),
+                            1000,
+                            64, linewidth=1.5, alpha = 0.5, fc ='yellow', color = 'yellow', zorder =3))
+    ax2.text(imshow.shape[1]-1800, 4, 'Another Burst', bbox=props)
     ax2.set_xlabel('Time [ms]', fontsize = 16)
     ax2.set_ylabel('Frequency [MHz]', fontsize = 16)
     ax2.set_yticks(np.linspace(len(freqs),0,9))
@@ -188,9 +264,8 @@ def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freq
     legend.get_frame().set_alpha(1)
     ax3.set_ylim(-len(freqs),1)
     fig.colorbar(im, orientation='vertical')
-    plt.savefig(outdir+'/B%s_'%burstid+name+'.pdf',format='pdf',dpi=80)
+    plt.savefig(outdir+'/B%s_'%burstid+name+'.png',format='png',dpi=80)
     plt.show()
-    plt.close()
 
     return snr
 
@@ -323,7 +398,6 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstco
 
     center_burst = np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]
     best_indices = np.array(best_indices) + begin_t
-    real_burst = False
 
     #top_band_power
     dm_list = np.linspace(DM-dm_trial-dmtrial_height//2, DM-dm_trial+dmtrial_height//2, dmtrial_height)
@@ -375,7 +449,7 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstco
         plt.savefig(outdir+'/B%s_'%burstcounter + 'DM_time.pdf',format='pdf',dpi=100)
         plt.close()
 
-    return real_burst, power_top, power_middle, power_bottom, dm_trial_flag, min(power_middle/power_bottom, power_middle/power_top)
+    return power_top, power_middle, power_bottom, dm_trial_flag, min(power_middle/power_bottom, power_middle/power_top)
 
 def delta_t(DM, fref, fchan):
     #Pulsar handbook dispersive delay between two frequencies in MHz
