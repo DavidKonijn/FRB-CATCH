@@ -17,7 +17,7 @@ from your.formats.filwriter import make_sigproc_object
 from numba import njit
 import time
 
-def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new_select, outdir, begin_t, downsampled, plot = False):
+def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new_select, outdir, begin_t, arr_not_dedispersed, dm, downsampled, best_indices = [], dedicated_y_range = False, plot = False):
     """ Place a box around a transient signal in the input fil file
     :param pulse: filterbank file with transient signal to place a box over
     :param dm: the dm of the puls
@@ -27,6 +27,7 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
     """
     # remove the masked channels from the data
     mask_chans = np.unique(np.where(dynspec== 0)[0])
+
     deleted_channels = np.delete(dynspec, mask_chans, axis=0)
     x_loc = int(((best_box[1]+best_box[0])/2)) - begin_t
 
@@ -47,13 +48,24 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
     heimdall_width = min(max(heimdall_width, 50), 1024)
     max_value = 0
 
-    for i in range(box_burst_dynspec.shape[0]//2):
-        for j in range(box_burst_dynspec.shape[0]//2-i):
-            #Heimdall sometimes makes mistakes in the downsampled version, so check for other appropriate widhts
-            if downsampled and heimdall_width == 1024:
-                 for k in range(3):
-                    box_x_l = x_loc-(2**(k+8))
-                    box_x_r = x_loc+(2**(k+8))
+    if dedicated_y_range == False:
+        for i in range(box_burst_dynspec.shape[0]//2):
+            for j in range(box_burst_dynspec.shape[0]//2-i):
+                #Heimdall sometimes makes mistakes in the downsampled version, so check for other appropriate widhts
+                if downsampled and heimdall_width == 1024:
+                    for k in range(3):
+                        box_x_l = x_loc-(2**(k+8))
+                        box_x_r = x_loc+(2**(k+8))
+                        box_y_b = 0+i*2
+                        box_y_t = box_burst_dynspec.shape[0]-j*2
+
+                        box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                        if box_intens >= max_value:
+                            max_value = box_intens
+                            best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+                else:
+                    box_x_l = x_loc-heimdall_width
+                    box_x_r = x_loc+heimdall_width
                     box_y_b = 0+i*2
                     box_y_t = box_burst_dynspec.shape[0]-j*2
 
@@ -61,23 +73,17 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
                     if box_intens >= max_value:
                         max_value = box_intens
                         best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
-            else:
-                box_x_l = x_loc-heimdall_width
-                box_x_r = x_loc+heimdall_width
-                box_y_b = 0+i*2
-                box_y_t = box_burst_dynspec.shape[0]-j*2
+    else:
+        best_indices[2] -= len(np.where(mask_chans<best_indices[2])[0])
+        best_indices[3] -= len(np.where(mask_chans<best_indices[3])[0])
 
-                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
-                if box_intens >= max_value:
-                    max_value = box_intens
-                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+    box_y_b = best_indices[2]
+    box_y_t = best_indices[3]
 
     for i in range(heimdall_width//4):
         for j in range(heimdall_width//4-i):
             box_x_l = x_loc-heimdall_width*2 + i*16
             box_x_r = x_loc+heimdall_width*2 - j*16
-            box_y_b = best_indices[2]
-            box_y_t = best_indices[3]
 
             box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
             if box_intens >= max_value:
@@ -101,7 +107,7 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
         converted_snr_burst = np.insert(converted_snr_burst, mask_chans[i], 0, axis=0)
 
     if plot:
-        plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir, mask_chans, new_select, snr, 'Boxed_fulldynspec', burstid)
+        plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir, mask_chans, new_select, snr, begin_t, arr_not_dedispersed, dm,'Boxed_fulldynspec', burstid)
 
     return best_indices, snr, fluence
 
@@ -180,92 +186,142 @@ def remove_duplicate_candidates(burst_cands,prob_array,lilo_number):
         sorted_burst_cands.append(burst_cands[sort_all_cands[i]])
         sorted_prob_arr.append(prob_array[sort_all_cands[i]])
 
-    # sorted_close_cands = np.array(sorted(double_hits, key=lambda x : x[1]))
+    sorted_close_cands = np.array(sorted(double_hits, key=lambda x : x[1]))
 
-    # remove_index_list = []
-    # for i in range(len(sorted_close_cands[:,1])):
-    #     remove_index_list.append(np.argwhere(np.array(sort_all_cands) == sorted_close_cands[:,1][i])[0][0])
+    remove_index_list = []
+    for i in range(len(sorted_close_cands[:,1])):
+        remove_index_list.append(np.argwhere(np.array(sort_all_cands) == sorted_close_cands[:,1][i])[0][0])
 
-    # sorted_burst_cands = np.delete(sorted_burst_cands, remove_index_list, axis = 0)
-    # sorted_prob_arr = np.delete(sorted_prob_arr, remove_index_list, axis = 0)
+    sorted_burst_cands = np.delete(sorted_burst_cands, remove_index_list, axis = 0)
+    sorted_prob_arr = np.delete(sorted_prob_arr, remove_index_list, axis = 0)
 
     return sorted_burst_cands, sorted_prob_arr
 
-def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, name, burstid):
-    fig = plt.figure(figsize=(12, 12))
-    rows=2
+def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, begin_t, arr_not_dedispersed, DM, name, burstid):
+    dynspec_indices = best_indices
+    burst_duration = ((best_indices[1]-best_indices[0])*1.6e1) # in ms
+    burst_bandwidth = 4*(best_indices[3]-best_indices[2]) # in MHz
+    burst_central_bandwidth = (np.flip(freqs)[(best_indices[3]+best_indices[2])//2]/1000) # in GHz
+
+    dmtrial_height  = max(3, int(2*burst_duration / (8.3 * burst_bandwidth * burst_central_bandwidth**(-3))))
+    dm_trial        = max(15, int(10*burst_duration / (8.3 * burst_bandwidth * burst_central_bandwidth**(-3))))
+
+    if dmtrial_height > int(DM/5):
+        dm_trial = int(DM)
+        dmtrial_height = int(DM/5)
+
+    center_burst = np.flip(freqs)[(best_indices[3]+best_indices[2])//2]
+    best_indices = np.array(best_indices) + begin_t
+
+    dm_list = np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2, 128)
+    dm_time = dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, freqs, center_burst, best_indices,DM, 'Plot')
+
+    locy = len(dm_list)//2
+    locx = int(((best_indices[1]+best_indices[0])/2)) + np.round(delta_t(DM, center_burst, freqs[-1])/(1.6e-2)).astype("int64")
+
+    box_width = best_indices[1] - best_indices[0]
+    box_height = int(dmtrial_height // ((dmtrial_height+2*dm_trial)/128))
+
+    fig = plt.figure(figsize=(16, 8))
+    rows=1
     cols=2
-    widths = [3, 1]
-    heights = [1,3]
+    widths = [3, 3]
+    heights = [1]
 
-    gs = gridspec.GridSpec(ncols=cols, nrows=rows,width_ratios=widths, height_ratios=heights, wspace=0.0, hspace=0.0)
+    gs = gridspec.GridSpec(ncols=cols, nrows=rows,width_ratios=widths, height_ratios=heights, wspace=0.2, hspace=0.0)
 
-    time_array = (np.sum(converted_snr_burst, axis=0))/converted_snr_burst.shape[0]
-    time_array_box = (np.sum(converted_snr_burst[best_indices[2]:best_indices[3],:], axis=0))/(best_indices[3]-best_indices[2])
-    freq_array = np.sum(converted_snr_burst, axis=1)/converted_snr_burst.shape[1]
+    dynspec = imshow
+    mask_chans = np.unique(np.where(dynspec== 0)[0])
 
-    ax1 = fig.add_subplot(gs[0,0]) # Time profile in S/N units
-    ax1.plot(time_array, color='gray', linestyle='-', alpha=0.6, label='Full time array')
-    ax1.plot(time_array_box, color='k', linestyle='-', label='Time array of the burst')
-    plt.setp(ax1.get_xticklabels(), visible=False)
-    ax1.axvline(best_indices[0],color='r', linestyle='--')
-    ax1.axvline(best_indices[1],color='r', linestyle='--')
-    ax1.get_yaxis().set_visible(False)
-    ax1.set_xticks(np.linspace(0,len(time_array),9))
-    ax1.set_xticklabels((np.linspace(0,len(time_array),9)*tres*1000).astype(int).astype(str))
-    ax1.legend()
+    deleted_channels = np.delete(dynspec, mask_chans, axis=0)
+    x_loc = int(((best_indices[1]+best_indices[0])/2)) - begin_t
+
+    if len(deleted_channels[0])//2 + 300 >= x_loc:
+        off_burst = deleted_channels[:, len(deleted_channels[0])//2 + 200:]
+    else:
+        off_burst = deleted_channels[:, :len(deleted_channels[0])//2 + 200]
+
+    converted_snr_burst = np.zeros_like(deleted_channels)
+
+    for fr in range(deleted_channels.shape[0]):
+        converted_snr_burst[fr,:]=convert_SN(deleted_channels[fr,:],off_burst[fr,:])
+
+    box_burst_dynspec = np.array(list(converted_snr_burst))
+
+    tdown = 10
+
+    try:
+        box_burst_dynspec=box_burst_dynspec.reshape(box_burst_dynspec.shape[0], box_burst_dynspec.shape[-1]//tdown, tdown).sum(axis=2)
+    except:
+        print('NO DOWNSAMPLING')
+
+    dynspec_indices[0] = int(dynspec_indices[0]/tdown)
+    dynspec_indices[1] = int(dynspec_indices[1]/tdown)
+
+    ax1 = fig.add_subplot(gs[0,0]) # Dynamic spectrum
+    im = ax1.imshow(box_burst_dynspec, aspect='auto', vmin = np.percentile(converted_snr_burst, 0), vmax = 2*np.percentile(converted_snr_burst, 100))
+
+    # reject the masked channels
+    for i in range(len(mask_chans)):
+        if mask_chans[i] <= dynspec_indices[2]:
+            dynspec_indices[2] -= 1
+        if mask_chans[i]<=dynspec_indices[3]:
+            dynspec_indices[3] -= 1
+
+    # for i in range(len(mask_chans)):
+    #     ax1.axhline(mask_chans[i], linewidth=4, c='w', zorder = 1)
+
+    props = dict(boxstyle='round', facecolor='white', alpha=1)
+    ax1.add_patch(Rectangle((dynspec_indices[0], dynspec_indices[2]),
+                            dynspec_indices[1]-dynspec_indices[0],
+                            dynspec_indices[3]-dynspec_indices[2], linewidth=1, linestyle='--', color = 'r', fc ='none', zorder=2))
+    ax1.add_patch(Rectangle((0,  box_burst_dynspec.shape[0]//2),
+                            100,
+                            box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.3, fc ='green', color = 'green', zorder =3))
+    ax1.text(25, box_burst_dynspec.shape[0]-4, 'Real Burst', bbox=props)
+    ax1.add_patch(Rectangle((0,  0),
+                            100,
+                            box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.3, fc ='red', color = 'red', zorder =3))
+    ax1.text(25, 4, 'No Burst', bbox=props)
+    ax1.add_patch(Rectangle((box_burst_dynspec.shape[1]-100,  box_burst_dynspec.shape[0]//2),
+                            100,
+                            box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.3, fc ='orange', color = 'orange', zorder =3))
+    ax1.text(box_burst_dynspec.shape[1]-270, box_burst_dynspec.shape[0]-4, 'Wrong Box', bbox=props)
+    ax1.add_patch(Rectangle((box_burst_dynspec.shape[1]-100,  0),
+                            100,
+                            box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.5, fc ='yellow', color = 'yellow', zorder =3))
+    ax1.text(box_burst_dynspec.shape[1]-330, 4, 'Another Burst', bbox=props)
+    ax1.set_xlabel('Timesteps', fontsize = 16)
+    ax1.set_ylabel('Frequency [MHz]', fontsize = 16)
+    ax1.set_yticks(np.linspace(box_burst_dynspec.shape[0],0,9))
+    ax1.set_yticklabels(np.linspace(freqs[0],freqs[-1],9).astype(int).astype(str))
+
     if new_select:
         ax1.set_title('FETCH found the burst', fontsize = 14)
     else:
         ax1.set_title('FETCH did NOT find the burst', fontsize = 14)
 
-    ax2 = fig.add_subplot(gs[1,0],sharex=ax1) # Dynamic spectrum
-    if new_select:
-        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 95))
-    else:
-        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 99))
+    ax2 = fig.add_subplot(gs[0,1])
+    ax2.imshow(dm_time, aspect='auto', vmin = np.percentile(dm_time, 40), vmax = np.percentile(dm_time, 80))
+    ax2.set_xlabel('Time', fontsize = 14)
+    dm0_range_left = locx-10*box_width
+    dm0_range_right = locx+10*box_width
+    for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+1)):
+        ax2.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[128,128-box_height],linestyle='--', color='r', alpha=0.6)
+        ax2.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[0,box_height],linestyle='--', color='r', alpha=0.6)
+        max_right = dm0_range_left+i*(box_width)
 
-    for i in range(len(mask_chans)):
-        ax2.axhline(mask_chans[i], linewidth=4, c='w', zorder = 1)
-    props = dict(boxstyle='round', facecolor='white', alpha=1)
-    ax2.add_patch(Rectangle((best_indices[0], best_indices[2]),
-                            best_indices[1]-best_indices[0],
-                            best_indices[3]-best_indices[2], linewidth=1.5,color = 'r', fc ='none', zorder=2))
-    ax2.add_patch(Rectangle((0,  64),
-                            1000,
-                            64, linewidth=1.5, alpha = 0.3, fc ='green', color = 'green', zorder =3))
-    ax2.text(100, 124, 'Real Burst', bbox=props)
-    ax2.add_patch(Rectangle((0,  0),
-                            1000,
-                            64, linewidth=1.5, alpha = 0.3, fc ='red', color = 'red', zorder =3))
-    ax2.text(100, 4, 'No Burst', bbox=props)
-    ax2.add_patch(Rectangle((imshow.shape[1]-1000,  64),
-                            1000,
-                            64, linewidth=1.5, alpha = 0.3, fc ='orange', color = 'orange', zorder =3))
-    ax2.text(imshow.shape[1]-2500, 124, 'Wrong Box', bbox=props)
-    ax2.add_patch(Rectangle((imshow.shape[1]-1000,  0),
-                            1000,
-                            64, linewidth=1.5, alpha = 0.5, fc ='yellow', color = 'yellow', zorder =3))
-    ax2.text(imshow.shape[1]-1800, 4, 'Another Burst', bbox=props)
-    ax2.set_xlabel('Time [ms]', fontsize = 16)
-    ax2.set_ylabel('Frequency [MHz]', fontsize = 16)
-    ax2.set_yticks(np.linspace(len(freqs),0,9))
-    ax2.set_yticklabels(np.linspace(freqs[0],freqs[-1],9).astype(int).astype(str))
+    ax2.plot([locx-(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2],[locy-box_height//2,locy+box_height//2,locy+box_height//2,locy-box_height//2,locy-box_height//2], color='r', alpha=0.6)
+    ax2.plot([dm0_range_left, dm0_range_left, max_right, max_right, dm0_range_left],[128,128-box_height,128-box_height,128,128], color='r', alpha=0.6)
+    ax2.plot([dm0_range_left, dm0_range_left, max_right, max_right, dm0_range_left],[0,box_height,box_height,0,0], color='r', alpha=0.6)
+    ax2.set_xlim(locx-15000, locx+15000)
+    ax2.set_yticks(np.linspace(0,128,9))
+    ax2.set_yticklabels(np.round(np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2,9),0))
+    ax2.set_ylabel('Trial DM', fontsize = 14)
+    ax2.set_ylim(128,0)
 
-    freq_array[np.where(freq_array == 0)] = np.nan
-    ax3 = fig.add_subplot(gs[1,1]) # Spectrum
-    ax3.axvline(0,color='green', linestyle='--', linewidth = 0.5, label='The zero line')
-    ax3.plot(freq_array,-np.arange(len(freq_array)), color='gray', alpha=0.6, linestyle='-', drawstyle='steps', label='Full freq array')
-    ax3.axhline(-best_indices[2],color='r', linestyle='--')
-    ax3.axhline(-best_indices[3],color='r', linestyle='--')
-    ax3.get_yaxis().set_visible(False)
-    ax3.get_xaxis().set_visible(False)
-    legend = ax3.legend(loc='upper center', facecolor='white',  title='SNR: '+str(np.round(snr,1)))
-    legend.get_frame().set_alpha(1)
-    ax3.set_ylim(-len(freqs),1)
-    fig.colorbar(im, orientation='vertical')
-    plt.savefig(outdir+'/B%s_'%burstid+name+'.png',format='png',dpi=80)
-    plt.show()
+    plt.savefig(outdir+'/B%s_'%str(burstid)+name+'.png',format='png',dpi=100)
+    plt.close()
 
     return snr
 
