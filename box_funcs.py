@@ -17,7 +17,7 @@ from your.formats.filwriter import make_sigproc_object
 from numba import njit
 import time
 
-def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new_select, outdir, begin_t, arr_not_dedispersed, dm, downsampled, best_indices = [], dedicated_y_range = False, plot = False):
+def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new_select, outdir, begin_t, arr_not_dedispersed, dm, downsampled, best_indices = [], dedicated_y_range = False, plot = False, fancyplot = False):
     """ Place a box around a transient signal in the input fil file
     :param pulse: filterbank file with transient signal to place a box over
     :param dm: the dm of the puls
@@ -107,7 +107,10 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
         converted_snr_burst = np.insert(converted_snr_burst, mask_chans[i], 0, axis=0)
 
     if plot:
-        plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir, mask_chans, new_select, snr, begin_t, arr_not_dedispersed, dm,'Boxed_fulldynspec', burstid)
+        plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir, mask_chans, new_select, snr, begin_t, arr_not_dedispersed, dm,'Selected Boxed Bursts', burstid)
+
+    if fancyplot:
+        frb_plot(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, 'Full Dynamic Spectrum', burstid)
 
     return best_indices, snr, fluence
 
@@ -232,24 +235,9 @@ def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freq
 
     dynspec = imshow
     mask_chans = np.unique(np.where(dynspec== 0)[0])
-
-    deleted_channels = np.delete(dynspec, mask_chans, axis=0)
-    x_loc = int(((best_indices[1]+best_indices[0])/2)) - begin_t
-
-    if len(deleted_channels[0])//2 + 300 >= x_loc:
-        off_burst = deleted_channels[:, len(deleted_channels[0])//2 + 200:]
-    else:
-        off_burst = deleted_channels[:, :len(deleted_channels[0])//2 + 200]
-
-    converted_snr_burst = np.zeros_like(deleted_channels)
-
-    for fr in range(deleted_channels.shape[0]):
-        converted_snr_burst[fr,:]=convert_SN(deleted_channels[fr,:],off_burst[fr,:])
-
-    box_burst_dynspec = np.array(list(converted_snr_burst))
+    box_burst_dynspec = np.delete(dynspec, mask_chans, axis=0)
 
     tdown = 10
-
     try:
         box_burst_dynspec=box_burst_dynspec.reshape(box_burst_dynspec.shape[0], box_burst_dynspec.shape[-1]//tdown, tdown).sum(axis=2)
     except:
@@ -324,6 +312,61 @@ def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freq
     plt.close()
 
     return snr
+
+def frb_plot(imshow, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, name, burstid):
+    fig = plt.figure(figsize=(12, 12))
+    rows=2
+    cols=2
+    widths = [3, 1]
+    heights = [1,3]
+    gs = gridspec.GridSpec(ncols=cols, nrows=rows,width_ratios=widths, height_ratios=heights, wspace=0.0, hspace=0.0)
+    time_array = (np.sum(converted_snr_burst, axis=0))/converted_snr_burst.shape[0]
+    time_array_box = (np.sum(converted_snr_burst[best_indices[2]:best_indices[3],:], axis=0))/(best_indices[3]-best_indices[2])
+    freq_array = np.sum(converted_snr_burst, axis=1)/converted_snr_burst.shape[1]
+    ax1 = fig.add_subplot(gs[0,0]) # Time profile in S/N units
+    ax1.plot(time_array, color='gray', linestyle='-', alpha=0.6, label='Full bandwidth timeseries')
+    ax1.plot(time_array_box, color='k', linestyle='-', label='Emission bandwidth timeseries')
+    plt.setp(ax1.get_xticklabels(), visible=False)
+    ax1.axvline(best_indices[0],color='r', linestyle='--')
+    ax1.axvline(best_indices[1],color='r', linestyle='--')
+    ax1.get_yaxis().set_visible(False)
+    ax1.set_xticks(np.linspace(0,len(time_array),9))
+    ax1.set_xticklabels((np.linspace(0,len(time_array),9)*tres*1000).astype(int).astype(str))
+    ax1.legend()
+    if new_select:
+        ax1.set_title('FETCH found the burst', fontsize = 14)
+    else:
+        ax1.set_title('FETCH did NOT find the burst', fontsize = 14)
+    ax2 = fig.add_subplot(gs[1,0],sharex=ax1) # Dynamic spectrum
+    if new_select:
+        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 95))
+    else:
+        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 99))
+    for i in range(len(mask_chans)):
+        ax2.axhline(mask_chans[i], linewidth=4, c='w', zorder = 1)
+    ax2.add_patch(Rectangle((best_indices[0], best_indices[2]),
+                            best_indices[1]-best_indices[0],
+                            best_indices[3]-best_indices[2], linewidth=1.5,color = 'r', fc ='none', zorder=2))
+    ax2.set_xlabel('Time [ms]', fontsize = 16)
+    ax2.set_ylabel('Frequency [MHz]', fontsize = 16)
+    ax2.set_yticks(np.linspace(len(freqs),0,9))
+    ax2.set_yticklabels(np.linspace(freqs[0],freqs[-1],9).astype(int).astype(str))
+    freq_array[np.where(freq_array == 0)] = np.nan
+    ax3 = fig.add_subplot(gs[1,1]) # Spectrum
+    ax3.axvline(0,color='green', linestyle='--', linewidth = 0.5, label='The zero line')
+    ax3.plot(freq_array,-np.arange(len(freq_array)), color='gray', alpha=0.6, linestyle='-', drawstyle='steps', label='Full temporal bandwidth')
+    ax3.axhline(-best_indices[2],color='r', linestyle='--')
+    ax3.axhline(-best_indices[3],color='r', linestyle='--')
+    ax3.get_yaxis().set_visible(False)
+    ax3.get_xaxis().set_visible(False)
+    legend = ax3.legend(loc='upper center', facecolor='white',  title='SNR: '+str(np.round(snr,1)))
+    legend.get_frame().set_alpha(1)
+    ax3.set_ylim(-len(freqs),1)
+    fig.colorbar(im, orientation='vertical')
+    plt.savefig(outdir+'/B%s_'%burstid+name+'.pdf',format='pdf',dpi=80)
+    plt.close()
+    return snr
+
 
 def inject_pulse(args):
     """ Injects an FRB pulse into real background data and returns a filterbank file with the burst
