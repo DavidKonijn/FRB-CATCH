@@ -80,15 +80,30 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
     box_y_b = best_indices[2]
     box_y_t = best_indices[3]
 
-    for i in range(heimdall_width//4):
-        for j in range(heimdall_width//4-i):
-            box_x_l = x_loc-heimdall_width*2 + i*16
-            box_x_r = x_loc+heimdall_width*2 - j*16
+    if dedicated_y_range == False:
+        for i in range(heimdall_width//4):
+            for j in range(heimdall_width//4-i):
+                box_x_l = x_loc-heimdall_width*2 + i*16
+                box_x_r = x_loc+heimdall_width*2 - j*16
 
-            box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
-            if box_intens >= max_value:
-                max_value = box_intens
-                best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                if box_intens >= max_value:
+                    max_value = box_intens
+                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
+    else:
+        box_x_l = best_indices[0]
+        box_x_r = best_indices[1]
+        max_value = 0
+
+        for i in range(40):
+            for j in range(40):
+                box_x_l = best_indices[0] + 3*(i-20)
+                box_x_r = best_indices[1] + 3*(j-20)
+
+                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
+                if box_intens >= max_value:
+                    max_value = box_intens
+                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
 
     profile_burst = np.mean(converted_snr_burst[:,best_indices[0]:best_indices[1]],axis=0)
     profile_off = np.mean(off_burst[:,0:best_indices[0]-best_indices[1]],axis=0)
@@ -102,15 +117,14 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
     for i in range(len(mask_chans)):
         if mask_chans[i] <= best_indices[2]:
             best_indices[2] += 1
-        if mask_chans[i]<=best_indices[3]:
+        if mask_chans[i] <= best_indices[3]:
             best_indices[3] += 1
         converted_snr_burst = np.insert(converted_snr_burst, mask_chans[i], 0, axis=0)
 
     if plot:
-        plot_boxxed_dynspec(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir, mask_chans, new_select, snr, begin_t, arr_not_dedispersed, dm,'Selected Boxed Bursts', burstid)
-
+        plot_boxxed_dynspec(converted_snr_burst,best_indices,freqs,outdir, mask_chans, begin_t, arr_not_dedispersed, dm, 'Selected Boxed Bursts', burstid)
     if fancyplot:
-        frb_plot(converted_snr_burst, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, 'Full Dynamic Spectrum', burstid)
+        frb_plot(converted_snr_burst,best_indices,freqs,outdir,mask_chans,'Full Dynamic Spectrum', burstid)
 
     return best_indices, snr, fluence
 
@@ -200,7 +214,8 @@ def remove_duplicate_candidates(burst_cands,prob_array,lilo_number):
 
     return sorted_burst_cands, sorted_prob_arr
 
-def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, begin_t, arr_not_dedispersed, DM, name, burstid):
+def plot_boxxed_dynspec(dynspec,best_indices,freqs,outdir,mask_chans, begin_t, arr_not_dedispersed, DM, name, burstid):
+    # calculating the full DM time plot
     dynspec_indices = best_indices
     burst_duration = ((best_indices[1]-best_indices[0])*1.6e1) # in ms
     burst_bandwidth = 4*(best_indices[3]-best_indices[2]) # in MHz
@@ -225,147 +240,195 @@ def plot_boxxed_dynspec(imshow, converted_snr_burst,best_indices,x_loc,tres,freq
     box_width = best_indices[1] - best_indices[0]
     box_height = int(dmtrial_height // ((dmtrial_height+2*dm_trial)/128))
 
-    fig = plt.figure(figsize=(16, 8))
-    rows=1
-    cols=2
-    widths = [3, 3]
-    heights = [1]
-
-    gs = gridspec.GridSpec(ncols=cols, nrows=rows,width_ratios=widths, height_ratios=heights, wspace=0.2, hspace=0.0)
-
-    dynspec = imshow
-    mask_chans = np.unique(np.where(dynspec== 0)[0])
-    box_burst_dynspec = np.delete(dynspec, mask_chans, axis=0)
-
+    #possible downsampling on the data
     tdown = 10
     try:
-        box_burst_dynspec=box_burst_dynspec.reshape(box_burst_dynspec.shape[0], box_burst_dynspec.shape[-1]//tdown, tdown).sum(axis=2)
+        dynspec=dynspec.reshape(dynspec.shape[0], dynspec.shape[-1]//tdown, tdown).sum(axis=2)
+        dynspec_indices[0] = int(dynspec_indices[0]/tdown)
+        dynspec_indices[1] = int(dynspec_indices[1]/tdown)
     except:
         print('NO DOWNSAMPLING')
 
-    dynspec_indices[0] = int(dynspec_indices[0]/tdown)
-    dynspec_indices[1] = int(dynspec_indices[1]/tdown)
-
-    ax1 = fig.add_subplot(gs[0,0]) # Dynamic spectrum
-    im = ax1.imshow(box_burst_dynspec, aspect='auto', vmin = np.percentile(converted_snr_burst, 0), vmax = 2*np.percentile(converted_snr_burst, 100))
+    #remove the masked channels
+    mask_chans = np.unique(np.where(dynspec== 0)[0])
+    box_burst_dynspec = np.delete(dynspec, mask_chans, axis=0)
 
     # reject the masked channels
+    dynspec_indices_with_zapped = np.array(list(dynspec_indices))
     for i in range(len(mask_chans)):
-        if mask_chans[i] <= dynspec_indices[2]:
+        if mask_chans[i] <= dynspec_indices_with_zapped[2]:
             dynspec_indices[2] -= 1
-        if mask_chans[i]<=dynspec_indices[3]:
+        if mask_chans[i] <= dynspec_indices_with_zapped[3]:
             dynspec_indices[3] -= 1
 
-    # for i in range(len(mask_chans)):
-    #     ax1.axhline(mask_chans[i], linewidth=4, c='w', zorder = 1)
+    #plot the full dynamic spectrum, with 1d side plots, and the dm time plot
+    fig = plt.figure(figsize=(16, 10))
+    rows=2
+    cols=4
+    widths = [3, 1, 0.5, 3]
+    heights = [1,3]
 
+    gs = gridspec.GridSpec(ncols=cols, nrows=rows,width_ratios=widths, height_ratios=heights, wspace=0.0, hspace=0.0)
+
+    dead_box = np.array(list(box_burst_dynspec))
+    dead_box[dynspec_indices[2]:dynspec_indices[3], dynspec_indices[0]:dynspec_indices[1]] = 0
+
+    time_array = np.sum(dead_box, axis=0)
+    time_array_box = np.sum(box_burst_dynspec[dynspec_indices[2]:dynspec_indices[3],:], axis=0)
+    freq_array = np.sum(dead_box, axis=1)
+    freq_array_box = np.sum(box_burst_dynspec[:,dynspec_indices[0]:dynspec_indices[1]], axis=1)
+
+    # Time profile in S/N units
+    ax1 = fig.add_subplot(gs[0,0])
+    ax1.plot(time_array, color='gray', linestyle='-', alpha=0.6, label='Full bandwidth timeseries')
+    ax1.plot(time_array_box, color='k', linestyle='-', label='Emission bandwidth timeseries')
+    plt.setp(ax1.get_xticklabels(), visible=False)
+    ax1.axvline(dynspec_indices[0],color='r', linestyle='--')
+    ax1.axvline(dynspec_indices[1],color='r', linestyle='--')
+    ax1.get_yaxis().set_visible(False)
+    ax1.set_xticks(np.linspace(0,len(time_array),9))
+    ax1.set_xlim(0, len(time_array))
+
+    #the plot line should be at the top of the band
+    dynspec_indices[2] = dynspec_indices[2] - 1
+    dynspec_indices[3] = dynspec_indices[3] - 1
+
+    # Dynamic spectrum
+    ax2 = fig.add_subplot(gs[1,0],sharex=ax1)
+    ax2.imshow(box_burst_dynspec, aspect='auto', vmin = np.percentile(box_burst_dynspec, 10), vmax = np.percentile(box_burst_dynspec, 100))
     props = dict(boxstyle='round', facecolor='white', alpha=1)
-    ax1.add_patch(Rectangle((dynspec_indices[0], dynspec_indices[2]),
-                            dynspec_indices[1]-dynspec_indices[0],
-                            dynspec_indices[3]-dynspec_indices[2], linewidth=1, linestyle='--', color = 'r', fc ='none', zorder=2))
-    ax1.add_patch(Rectangle((0,  box_burst_dynspec.shape[0]//2),
+    ax2.plot([dynspec_indices[0], dynspec_indices[0]],[dynspec_indices[2], dynspec_indices[2]+1], linewidth=1, linestyle='--', color = 'r')
+    ax2.plot([dynspec_indices[0], dynspec_indices[0]+int(box_width/10)],[dynspec_indices[2], dynspec_indices[2]], linewidth=1, linestyle='-', color = 'r')
+    ax2.plot([dynspec_indices[1], dynspec_indices[1]-int(box_width/10)],[dynspec_indices[3], dynspec_indices[3]], linewidth=1, linestyle='-', color = 'r')
+    ax2.plot([dynspec_indices[1], dynspec_indices[1]],[dynspec_indices[3], dynspec_indices[3]-1], linewidth=1, linestyle='--', color = 'r')
+    ax2.add_patch(Rectangle((0,  box_burst_dynspec.shape[0]//2),
                             100,
                             box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.3, fc ='green', color = 'green', zorder =3))
-    ax1.text(25, box_burst_dynspec.shape[0]-4, 'Real Burst', bbox=props)
-    ax1.add_patch(Rectangle((0,  0),
+    ax2.text(25, box_burst_dynspec.shape[0]-4, 'Real Burst', bbox=props)
+    ax2.add_patch(Rectangle((0,  0),
                             100,
                             box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.3, fc ='red', color = 'red', zorder =3))
-    ax1.text(25, 4, 'No Burst', bbox=props)
-    ax1.add_patch(Rectangle((box_burst_dynspec.shape[1]-100,  box_burst_dynspec.shape[0]//2),
+    ax2.text(25, 4, 'No Burst', bbox=props)
+    ax2.add_patch(Rectangle((box_burst_dynspec.shape[1]-100,  box_burst_dynspec.shape[0]//2),
                             100,
                             box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.3, fc ='orange', color = 'orange', zorder =3))
-    ax1.text(box_burst_dynspec.shape[1]-270, box_burst_dynspec.shape[0]-4, 'Wrong Box', bbox=props)
-    ax1.add_patch(Rectangle((box_burst_dynspec.shape[1]-100,  0),
+    ax2.text(box_burst_dynspec.shape[1]-310, box_burst_dynspec.shape[0]-4, 'Wrong Box', bbox=props)
+    ax2.add_patch(Rectangle((box_burst_dynspec.shape[1]-100,  0),
                             100,
                             box_burst_dynspec.shape[0]//2, linewidth=1.5, alpha = 0.5, fc ='yellow', color = 'yellow', zorder =3))
-    ax1.text(box_burst_dynspec.shape[1]-330, 4, 'Another Burst', bbox=props)
-    ax1.set_xlabel('Timesteps', fontsize = 16)
-    ax1.set_ylabel('Frequency [MHz]', fontsize = 16)
-    ax1.set_yticks(np.linspace(box_burst_dynspec.shape[0],0,9))
-    ax1.set_yticklabels(np.linspace(freqs[0],freqs[-1],9).astype(int).astype(str))
+    ax2.text(box_burst_dynspec.shape[1]-370, 4, 'Another Burst', bbox=props)
+    ax2.set_xlabel('Timesteps', fontsize = 16)
+    ax2.set_ylabel('Frequency [MHz]', fontsize = 16)
+    ax2.set_yticks(np.linspace(box_burst_dynspec.shape[0],0,9))
+    ax2.set_yticklabels(np.linspace(freqs[0],freqs[-1],9).astype(int).astype(str))
+    ax2.set_ylim(len(freq_array)-1, 0)
 
-    if new_select:
-        ax1.set_title('FETCH found the burst', fontsize = 14)
-    else:
-        ax1.set_title('FETCH did NOT find the burst', fontsize = 14)
+    # Freq profile in MHz units
+    ax3 = fig.add_subplot(gs[1,1])
+    ax3.axvline(0,color='green', linestyle='--', linewidth = 0.5)
+    ax3.plot(freq_array,-np.arange(len(freq_array)), color='gray', alpha=0.6, linestyle='-', drawstyle='steps', label='Full temporal bandwidth')
+    ax3.plot(freq_array_box,-np.arange(len(freq_array_box)), color='k', linestyle='-', drawstyle='steps', label='Emission temporal bandwidth')
+    ax3.axhline(-dynspec_indices[2],color='r', linestyle='--')
+    ax3.axhline(-dynspec_indices[3],color='r', linestyle='--')
+    ax3.get_yaxis().set_visible(False)
+    ax3.get_xaxis().set_visible(False)
+    ax3.set_ylim(-len(freq_array)+1,0)
 
-    ax2 = fig.add_subplot(gs[0,1])
-    ax2.imshow(dm_time, aspect='auto', vmin = np.percentile(dm_time, 40), vmax = np.percentile(dm_time, 80))
-    ax2.set_xlabel('Time', fontsize = 14)
+    # add small distance between dynamic spectrum and dm-time
+    ax4 = fig.add_subplot(gs[1,2])
+    ax4.set_visible(False)
+
+    # DM-time plot with burst indication
+    ax5 = fig.add_subplot(gs[1,3])
+    ax5.imshow(dm_time, aspect='auto', vmin = np.percentile(dm_time, 40), vmax = np.percentile(dm_time, 80))
+    ax5.set_xlabel('Time', fontsize = 14)
     dm0_range_left = locx-10*box_width
     dm0_range_right = locx+10*box_width
     for i in range(int((dm0_range_right-dm0_range_left)/(box_width)+1)):
-        ax2.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[128,128-box_height],linestyle='--', color='r', alpha=0.6)
-        ax2.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[0,box_height],linestyle='--', color='r', alpha=0.6)
+        ax5.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[128,128-box_height],linestyle='--', color='r', alpha=0.6)
+        ax5.plot([dm0_range_left+i*(box_width),dm0_range_left+i*(box_width)],[0,box_height],linestyle='--', color='r', alpha=0.6)
         max_right = dm0_range_left+i*(box_width)
 
-    ax2.plot([locx-(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2],[locy-box_height//2,locy+box_height//2,locy+box_height//2,locy-box_height//2,locy-box_height//2], color='r', alpha=0.6)
-    ax2.plot([dm0_range_left, dm0_range_left, max_right, max_right, dm0_range_left],[128,128-box_height,128-box_height,128,128], color='r', alpha=0.6)
-    ax2.plot([dm0_range_left, dm0_range_left, max_right, max_right, dm0_range_left],[0,box_height,box_height,0,0], color='r', alpha=0.6)
-    ax2.set_xlim(locx-15000, locx+15000)
-    ax2.set_yticks(np.linspace(0,128,9))
-    ax2.set_yticklabels(np.round(np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2,9),0))
-    ax2.set_ylabel('Trial DM', fontsize = 14)
-    ax2.set_ylim(128,0)
+    ax5.plot([locx-(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx+(best_indices[1]-best_indices[0])//2, locx-(best_indices[1]-best_indices[0])//2],[locy-box_height//2,locy+box_height//2,locy+box_height//2,locy-box_height//2,locy-box_height//2], color='r', alpha=0.6)
+    ax5.plot([dm0_range_left, dm0_range_left, max_right, max_right, dm0_range_left],[128,128-box_height,128-box_height,128,128], color='r', alpha=0.6)
+    ax5.plot([dm0_range_left, dm0_range_left, max_right, max_right, dm0_range_left],[0,box_height,box_height,0,0], color='r', alpha=0.6)
+    ax5.set_xlim(locx-15000, locx+15000)
+    ax5.set_yticks(np.linspace(0,128,9))
+    ax5.set_yticklabels(np.round(np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2,9),0))
+    ax5.set_ylabel('Trial DM', fontsize = 14)
+    ax5.set_ylim(128,0)
 
     plt.savefig(outdir+'/B%s_'%str(burstid)+name+'.png',format='png',dpi=100)
     plt.close()
 
-    return snr
+    return
 
-def frb_plot(imshow, converted_snr_burst,best_indices,x_loc,tres,freqs,outdir,mask_chans, new_select, snr, name, burstid):
-    fig = plt.figure(figsize=(12, 12))
+def frb_plot(box_burst_dynspec,dynspec_indices,freqs,outdir,mask_chans, name, burstid):
+    #plot the full dynamic spectrum, with 1d side plots, and the dm time plot
+    fig = plt.figure(figsize=(12, 10))
     rows=2
     cols=2
-    widths = [3, 1]
+    widths = [3,1]
     heights = [1,3]
+
     gs = gridspec.GridSpec(ncols=cols, nrows=rows,width_ratios=widths, height_ratios=heights, wspace=0.0, hspace=0.0)
-    time_array = (np.sum(converted_snr_burst, axis=0))/converted_snr_burst.shape[0]
-    time_array_box = (np.sum(converted_snr_burst[best_indices[2]:best_indices[3],:], axis=0))/(best_indices[3]-best_indices[2])
-    freq_array = np.sum(converted_snr_burst, axis=1)/converted_snr_burst.shape[1]
-    ax1 = fig.add_subplot(gs[0,0]) # Time profile in S/N units
+
+    dead_box = np.array(list(box_burst_dynspec))
+    dead_box[dynspec_indices[2]:dynspec_indices[3], dynspec_indices[0]:dynspec_indices[1]] = 0
+
+    time_array = np.sum(dead_box, axis=0)
+    time_array_box = np.sum(box_burst_dynspec[dynspec_indices[2]:dynspec_indices[3],:], axis=0)
+    freq_array = np.sum(dead_box, axis=1)
+    freq_array_box = np.sum(box_burst_dynspec[:,dynspec_indices[0]:dynspec_indices[1]], axis=1)
+
+    # Time profile in S/N units
+    ax1 = fig.add_subplot(gs[0,0])
     ax1.plot(time_array, color='gray', linestyle='-', alpha=0.6, label='Full bandwidth timeseries')
     ax1.plot(time_array_box, color='k', linestyle='-', label='Emission bandwidth timeseries')
     plt.setp(ax1.get_xticklabels(), visible=False)
-    ax1.axvline(best_indices[0],color='r', linestyle='--')
-    ax1.axvline(best_indices[1],color='r', linestyle='--')
+    ax1.axvline(dynspec_indices[0],color='r', linestyle='--')
+    ax1.axvline(dynspec_indices[1],color='r', linestyle='--')
     ax1.get_yaxis().set_visible(False)
     ax1.set_xticks(np.linspace(0,len(time_array),9))
-    ax1.set_xticklabels((np.linspace(0,len(time_array),9)*tres*1000).astype(int).astype(str))
-    ax1.legend()
-    if new_select:
-        ax1.set_title('FETCH found the burst', fontsize = 14)
-    else:
-        ax1.set_title('FETCH did NOT find the burst', fontsize = 14)
-    ax2 = fig.add_subplot(gs[1,0],sharex=ax1) # Dynamic spectrum
-    if new_select:
-        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 95))
-    else:
-        im = ax2.imshow(imshow, aspect='auto', vmin = np.percentile(converted_snr_burst, 15), vmax = np.percentile(converted_snr_burst, 99))
+    ax1.set_xticklabels(np.linspace(0,len(time_array)*1.6e-2,9))
+    ax1.legend(facecolor='white')
+
+    # Dynamic spectrum
+    ax2 = fig.add_subplot(gs[1,0],sharex=ax1)
+    ax2.imshow(box_burst_dynspec, aspect='auto', vmin = np.percentile(box_burst_dynspec, 30), vmax = np.percentile(box_burst_dynspec, 90))
+
+    props = dict(boxstyle='round', facecolor='white', alpha=1)
+    ax2.add_patch(Rectangle((dynspec_indices[0], dynspec_indices[2]),
+                            dynspec_indices[1]-dynspec_indices[0],
+                            dynspec_indices[3]-dynspec_indices[2], linewidth=1, linestyle='--', color = 'r', fc ='none', zorder=2))
     for i in range(len(mask_chans)):
         ax2.axhline(mask_chans[i], linewidth=4, c='w', zorder = 1)
-    ax2.add_patch(Rectangle((best_indices[0], best_indices[2]),
-                            best_indices[1]-best_indices[0],
-                            best_indices[3]-best_indices[2], linewidth=1.5,color = 'r', fc ='none', zorder=2))
+
     ax2.set_xlabel('Time [ms]', fontsize = 16)
     ax2.set_ylabel('Frequency [MHz]', fontsize = 16)
-    ax2.set_yticks(np.linspace(len(freqs),0,9))
+    ax2.set_yticks(np.linspace(box_burst_dynspec.shape[0],0,9))
     ax2.set_yticklabels(np.linspace(freqs[0],freqs[-1],9).astype(int).astype(str))
-    freq_array[np.where(freq_array == 0)] = np.nan
-    ax3 = fig.add_subplot(gs[1,1]) # Spectrum
-    ax3.axvline(0,color='green', linestyle='--', linewidth = 0.5, label='The zero line')
+
+    # Freq profile in MHz units
+    ax3 = fig.add_subplot(gs[1,1])
+    ax3.axvline(0,color='green', linestyle='--', linewidth = 0.5)
     ax3.plot(freq_array,-np.arange(len(freq_array)), color='gray', alpha=0.6, linestyle='-', drawstyle='steps', label='Full temporal bandwidth')
-    ax3.axhline(-best_indices[2],color='r', linestyle='--')
-    ax3.axhline(-best_indices[3],color='r', linestyle='--')
+    ax3.plot(freq_array_box,-np.arange(len(freq_array_box)), color='k', linestyle='-', drawstyle='steps', label='Emission temporal bandwidth')
+    ax3.axhline(-dynspec_indices[2],color='r', linestyle='--')
+    ax3.axhline(-dynspec_indices[3],color='r', linestyle='--')
     ax3.get_yaxis().set_visible(False)
     ax3.get_xaxis().set_visible(False)
-    legend = ax3.legend(loc='upper center', facecolor='white',  title='SNR: '+str(np.round(snr,1)))
+    if dynspec_indices[2]>20:
+        legend = ax3.legend(loc='upper center', facecolor='white')
+    else:
+        legend = ax3.legend(loc='lower center', facecolor='white')
     legend.get_frame().set_alpha(1)
     ax3.set_ylim(-len(freqs),1)
-    fig.colorbar(im, orientation='vertical')
+    ax3.set_ylim(-len(freq_array),1)
     plt.savefig(outdir+'/B%s_'%burstid+name+'.pdf',format='pdf',dpi=80)
     plt.close()
-    return snr
+
+    return
 
 
 def inject_pulse(args):
