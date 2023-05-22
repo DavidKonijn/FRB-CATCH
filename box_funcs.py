@@ -46,7 +46,7 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
 
     #sometimes Heimdall has a stroke, so set the minimum at 50
     heimdall_width = min(max(heimdall_width, 50), 1024)
-    max_value = 0
+    max_value = -1e10
 
     if dedicated_y_range == False:
         for i in range(box_burst_dynspec.shape[0]//2):
@@ -105,14 +105,13 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
                     max_value = box_intens
                     best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
 
-    profile_burst = np.mean(converted_snr_burst[:,best_indices[0]:best_indices[1]],axis=0)
-    profile_off = np.mean(off_burst[:,0:best_indices[0]-best_indices[1]],axis=0)
-    profile_burst = convert_SN(profile_burst , profile_off)
+    profile_burst = np.mean(converted_snr_burst[best_indices[2]:best_indices[3],best_indices[0]:best_indices[1]], axis=0)
+    profile_off = np.mean(off_burst[best_indices[2]:best_indices[3],best_indices[0]-best_indices[1]:], axis=0)
+    profile_burst = convert_SN(profile_burst, profile_off)
 
     snr = np.sum(profile_burst)/np.sqrt(best_indices[1]-best_indices[0])
     profile_burst_flux=profile_burst*radiometer(tres*1000,(best_indices[3]-best_indices[2])*fres,2,35/1.4)
     fluence = np.sum(profile_burst_flux*tres*1000)
-
     # reinject the masked channels
     for i in range(len(mask_chans)):
         if mask_chans[i] <= best_indices[2]:
@@ -121,16 +120,22 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
             best_indices[3] += 1
         converted_snr_burst = np.insert(converted_snr_burst, mask_chans[i], 0, axis=0)
 
+    box_indices = list(best_indices)
+
     if plot:
         plot_boxxed_dynspec(converted_snr_burst,best_indices,freqs,outdir, mask_chans, begin_t, arr_not_dedispersed, dm, 'Selected Boxed Bursts', burstid)
     if fancyplot:
         frb_plot(converted_snr_burst,best_indices,freqs,outdir,mask_chans,'Full Dynamic Spectrum', burstid)
 
-    return best_indices, snr, fluence
+    return box_indices, snr, fluence
 
 def candidate_lilo_link(lilo_number):
-    lilo_list = sorted(glob.glob('/data/hewitt/sharing/'+lilo_number+'/lilo*'))
+    lilo_list = sorted(glob.glob('/data/hewitt/eclat/RNarwhal/'+lilo_number+'/lilo*/*bit.fil'))
     lilo_dict = {}
+
+    if len(lilo_list) == 0:
+        print("Target number-file has no bursts; empty file.")
+        return 'Empty File', 'Empty File', 'Empty File'
 
     for i in range(len(lilo_list)):
         your_object = your.Your(lilo_list[i])
@@ -154,7 +159,17 @@ def candidate_lilo_link(lilo_number):
 
     results_csv = np.array(results_csv)
     for i in range(len(results_csv)):
-        all_model_candidates.append([lilo_dict[results_csv[i][1].split('_')[2][:11]], float(results_csv[i][1].split('_')[4]), float(results_csv[i][1].split('_')[6]),results_csv[i][1], results_csv[i][0]])
+        lilo_bursttime = results_csv[i][1].split('_')[2][:11]
+
+        #due to a specific way of rounding by Your, we need to check if the middle digits are exactly 9999, and if the final digit is 6 or greater.
+        #if yes, then the 5th digit after the komma needs to increase by one...
+        if results_csv[i][1].split('_')[2][11:15] == '9999' and int(results_csv[i][1].split('_')[2][-1]) > 5:
+            if lilo_bursttime[-1] != '9':
+                lilo_bursttime = results_csv[i][1].split('_')[2][:10] + str(int(lilo_bursttime[-1])+1)
+            else:
+                lilo_bursttime = results_csv[i][1].split('_')[2][:10] + '0'
+
+        all_model_candidates.append([lilo_dict[lilo_bursttime], float(results_csv[i][1].split('_')[4]), float(results_csv[i][1].split('_')[6]),results_csv[i][1], results_csv[i][0]])
 
     return all_model_candidates, prob_array, label_array
 
@@ -430,7 +445,6 @@ def frb_plot(box_burst_dynspec,dynspec_indices,freqs,outdir,mask_chans, name, bu
 
     return
 
-
 def inject_pulse(args):
     """ Injects an FRB pulse into real background data and returns a filterbank file with the burst
     :param args: all parameters for the burst
@@ -617,7 +631,7 @@ def delta_t(DM, fref, fchan):
     #Pulsar handbook dispersive delay between two frequencies in MHz
     return 4.148808*10**6 * (fref**(-2) - fchan**(-2)) * DM
 
-def dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices,DM, mid_or_top):
+def dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices ,DM, mid_or_top):
     box_width = best_indices[1] - best_indices[0]
     dm_time = np.zeros((len(dm_list), arr_not_dedispersed.shape[1]), dtype=np.float32)
 
@@ -631,7 +645,7 @@ def dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, 
     roll_list = np.rint(delta_t(dm_list, center_burst, frequencies[-1])/(1.6e-2))
 
     for i in range(len(dm_time)):
-        dm_time[i] = np.roll(dm_time[i], int(roll_list[i]))
+       dm_time[i] = np.roll(dm_time[i], int(roll_list[i]))
 
     locx=int(((best_indices[1]+best_indices[0])/2)) + int(np.rint(delta_t(DM, center_burst, frequencies[-1])/(1.6e-2)))
     locy = dmtrial_height//2

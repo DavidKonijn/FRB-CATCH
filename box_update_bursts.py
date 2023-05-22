@@ -8,13 +8,17 @@ burst_csv = pd.read_csv('burst_parameters.csv')
 selected_truths = pd.read_csv('selected_burst_truths.csv')
 
 lilo_targets = [str(59898),str(59879),str(59870),str(59873),str(59881),str(59882),str(59883),str(59884),str(59887),str(59888),str(59889)]
-# lilo_targets = [str(59898)]
+lilo_targets = [str(59867)]
 candidate_counter = 0
 
 for j in range(len(lilo_targets)):
     lilo_number = lilo_targets[j]
 
     burst_cands, prob_array, label_array = candidate_lilo_link(lilo_number)
+
+    if burst_cands == 'Empty File':
+        continue
+
     burst_cands, prob_array = remove_duplicate_candidates(burst_cands, prob_array, lilo_number)
 
     for i in range(len(burst_cands)):
@@ -105,10 +109,10 @@ for j in range(len(lilo_targets)):
                                 int(np.rint(float(selected_truths['Real Burst Wrong Box'][selected_burst_counter].split(',')[3][:-1])/128*(128-len(mask_chans))))]
 
                 # reinject the masked channels
-                for i in range(len(mask_chans)):
-                    if mask_chans[i] <= best_indices[2]:
+                for k in range(len(mask_chans)):
+                    if mask_chans[k] <= best_indices[2]:
                         best_indices[2] += 1
-                    if mask_chans[i]<=best_indices[3]:
+                    if mask_chans[k]<=best_indices[3]:
                         best_indices[3] += 1
 
                 #box the candidate
@@ -168,10 +172,10 @@ for j in range(len(lilo_targets)):
                                 int(np.rint(float(selected_truths['Extra Burst'][selected_burst_counter].split(',')[3][:-1])/128*(128-len(mask_chans))))]
 
                 # reinject the masked channels
-                for i in range(len(mask_chans)):
-                    if mask_chans[i] <= best_indices[2]:
+                for k in range(len(mask_chans)):
+                    if mask_chans[k] <= best_indices[2]:
                         best_indices[2] += 1
-                    if mask_chans[i]<=best_indices[3]:
+                    if mask_chans[k]<=best_indices[3]:
                         best_indices[3] += 1
 
                 time_diff = (((best_box[1]+best_box[0])/2) - begin_t) - ((best_indices[1]+best_indices[0])/2)
@@ -182,7 +186,7 @@ for j in range(len(lilo_targets)):
                 best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, fetch_prediction, outdir, begin_t, arr_not_dedispersed, dm, downsampled, best_indices, dedicated_y_range = True, plot = False, fancyplot= True)
 
                 burst_csv.loc[burstid,'lilo name'] = lilo_name
-                burst_csv.loc[burstid,'cand name'] = '_'.join(burst_cands[i][3].split('_')[:4] + [str(time_new)] + burst_cands[i][3].split('_')[6:])
+                burst_csv.loc[burstid,'cand name'] = '_'.join(burst_cands[i][3].split('_')[:4] + [str(time_new)] + ['dm'] + burst_cands[i][3].split('_')[6:])
 
                 burst_csv.loc[burstid,'time width']=best_indices[1]-best_indices[0]
                 burst_csv.loc[burstid,'freq width']=best_indices[3]-best_indices[2]
@@ -237,10 +241,10 @@ for j in range(len(lilo_targets)):
                                 int(np.rint(float(selected_truths['Both'][selected_burst_counter].split(',')[3][:-1])/128*(128-len(mask_chans))))]
 
                 # reinject the masked channels
-                for i in range(len(mask_chans)):
-                    if mask_chans[i] <= best_indices[2]:
+                for k in range(len(mask_chans)):
+                    if mask_chans[k] <= best_indices[2]:
                         best_indices[2] += 1
-                    if mask_chans[i]<=best_indices[3]:
+                    if mask_chans[k]<=best_indices[3]:
                         best_indices[3] += 1
 
                 #box the candidate
@@ -261,10 +265,10 @@ for j in range(len(lilo_targets)):
                                 int(np.rint(float(selected_truths['Both'][selected_burst_counter].split(',')[7][:-1])/128*(128-len(mask_chans))))]
 
                 # reinject the masked channels
-                for i in range(len(mask_chans)):
-                    if mask_chans[i] <= best_indices[2]:
+                for k in range(len(mask_chans)):
+                    if mask_chans[k] <= best_indices[2]:
                         best_indices[2] += 1
-                    if mask_chans[i]<=best_indices[3]:
+                    if mask_chans[k]<=best_indices[3]:
                         best_indices[3] += 1
 
                 time_diff = (((best_box[1]+best_box[0])/2) - begin_t) - ((best_indices[1]+best_indices[0])/2)
@@ -275,7 +279,7 @@ for j in range(len(lilo_targets)):
                 best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, fetch_prediction, outdir, begin_t, arr_not_dedispersed, dm, downsampled, best_indices, dedicated_y_range = True, plot = False, fancyplot = True)
 
                 burst_csv.loc[burstid,'lilo name'] = lilo_name
-                burst_csv.loc[burstid,'cand name'] = '_'.join(burst_cands[i][3].split('_')[:4] + [str(time_new)] + burst_cands[i][3].split('_')[6:])
+                burst_csv.loc[burstid,'cand name'] = '_'.join(burst_cands[i][3].split('_')[:4] + [str(time_new)] + ['dm'] + burst_cands[i][3].split('_')[6:])
 
                 burst_csv.loc[burstid,'time width']=best_indices[1]-best_indices[0]
                 burst_csv.loc[burstid,'freq width']=best_indices[3]-best_indices[2]
@@ -287,4 +291,5 @@ for j in range(len(lilo_targets)):
                 burst_csv.loc[burstid,'Real Burst']=True
 
             burst_csv.to_csv(outdir + '/updated_burst_parameters.csv')
+
         candidate_counter += 1
