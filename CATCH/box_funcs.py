@@ -14,14 +14,13 @@ from matplotlib.patches import Rectangle
 from your.formats.filwriter import make_sigproc_object
 from numba import njit
 
-def candidate_lilo_link(lilo_number):
+def candidate_lilo_link(lilo_number,lilo_frb):
     """ Identify each Heimdall candidate from the inserted lilo number
 
     :param lilo_number: the target lilo number
     :return: Heimdall candidates and FETCH's probability array
     """
-
-    lilo_list = sorted(glob.glob('/data/hewitt/eclat/RNarwhal/'+lilo_number+'/lilo*/*bit.fil'))
+    lilo_list = sorted(glob.glob('/data/hewitt/eclat/'+lilo_frb+'/'+lilo_number+'/lilo*/*bit.fil'))
     lilo_dict = {}
 
     #if the data has ben cleaned i.e. there is no results folder -> skip this lilo
@@ -35,7 +34,7 @@ def candidate_lilo_link(lilo_number):
         start = your_object.your_header.tstart
         lilo_dict[str(start)[:11]] = lilo_list[i]
 
-    results_csv_list = sorted(glob.glob('/data/hewitt/eclat/RNarwhal/'+lilo_number+'/ash/results*'))
+    results_csv_list = sorted(glob.glob('/data/hewitt/eclat/'+lilo_frb+'/'+lilo_number+'/ash/results*'))
     results_csv = pd.read_csv(results_csv_list[0])
     prob_array = [[] for i in range(len(results_csv))]
 
@@ -63,7 +62,7 @@ def candidate_lilo_link(lilo_number):
 
     return all_model_candidates, prob_array
 
-def remove_duplicate_candidates(burst_cands,prob_array,lilo_number):
+def remove_duplicate_candidates(burst_cands,prob_array,lilo_number,lilo_frb):
     """ Remove duplicate candidates from downsampled and non-downsampled data
 
     :param burst_cands: the full burst candidate array
@@ -95,8 +94,8 @@ def remove_duplicate_candidates(burst_cands,prob_array,lilo_number):
         #create the list of double hits within 100ms which need to be removed
         for l in range(len(sorted_time)-1):
             if sorted_time[l+1] - sorted_time[l] < 0.1:
-                cand_h5_first = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/ash/"+burst_cands[sorted_index[l]][3]
-                cand_h5_second = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/ash/"+burst_cands[sorted_index[l+1]][3]
+                cand_h5_first = "/data/hewitt/eclat/"+lilo_frb+'/'+lilo_number+"/ash/"+burst_cands[sorted_index[l]][3]
+                cand_h5_second = "/data/hewitt/eclat/"+lilo_frb+'/'+lilo_number+"/ash/"+burst_cands[sorted_index[l+1]][3]
 
                 downsample_test = 0
                 with h5py.File(cand_h5_first, "r") as f:
@@ -249,7 +248,7 @@ def dm_time_toa(arr_not_dedispersed, frequencies, DM, bt, tsamp, heimdall_width)
 
     return best_box
 
-def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, outdir, begin_t, arr_not_dedispersed, dm, downsampled, heimdall_name, best_indices = [], dedicated_y_range = False, plot = False, fancyplot = False):
+def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, outdir, begin_t, arr_not_dedispersed, dm, downsampled, heimdall_name, lilo_name, frb_predictor = [False, False, False], best_indices = [], dedicated_y_range = False, plot = False, fancyplot = False):
     """ Place a box around a transient signal in the input fil file
     :param burstid: the burst id of the burst
     :param dynspec: the dynamic spectrum of the burst
@@ -397,7 +396,7 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, out
     box_indices = list(best_indices)
 
     if plot:
-        plot_boxxed_dynspec(converted_snr_burst,best_indices,freqs,outdir, mask_chans, begin_t, arr_not_dedispersed, dm, heimdall_name, 'Selected Boxed Bursts', burstid)
+        plot_boxxed_dynspec(converted_snr_burst,best_indices,freqs,outdir, mask_chans, begin_t, arr_not_dedispersed, dm, heimdall_name, 'Selected Boxed Bursts', burstid, frb_predictor, lilo_name)
     if fancyplot:
         frb_plot(converted_snr_burst,best_indices,freqs,outdir,mask_chans,'Full Dynamic Spectrum', burstid)
 
@@ -415,7 +414,7 @@ def radiometer(tsamp, bw, npol, SEFD):
 
     return (SEFD)*(1/np.sqrt((bw*1.e6)*npol*tsamp*1e-3))
 
-def plot_boxxed_dynspec(dynspec,best_indices,freqs,outdir,mask_chans, begin_t, arr_not_dedispersed, DM, heimdall_name, name, burstid):
+def plot_boxxed_dynspec(dynspec,best_indices,freqs,outdir,mask_chans, begin_t, arr_not_dedispersed, DM, heimdall_name, name, burstid, frb_predictor, lilo_name):
     """ Plots the BOXED dynamic spectrum next to the DM-time spectrum
     :param dynspec: the dynamic spectrum of the burst
     :param best_indices: update indices from the clicking step
@@ -431,7 +430,8 @@ def plot_boxxed_dynspec(dynspec,best_indices,freqs,outdir,mask_chans, begin_t, a
     :return:
     """
 
-    # calculating the full DM-time spectrum
+    # calculating the full DM-time spectrum, see dm_time_analysis()
+
     dynspec_indices = best_indices
     burst_duration = ((best_indices[1]-best_indices[0])*1.6e1) # in ms
     burst_bandwidth = 4*(best_indices[3]-best_indices[2]) # in MHz
@@ -582,7 +582,15 @@ def plot_boxxed_dynspec(dynspec,best_indices,freqs,outdir,mask_chans, begin_t, a
     ax5.set_yticklabels(np.round(np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2,9),0))
     ax5.set_ylabel('Trial DM', fontsize = 14)
     ax5.set_ylim(128,0)
-    ax5.set_title("Candidate on MJD {} and at {} seconds".format(heimdall_name.split('_')[2][:5], heimdall_name.split('_')[4][:5]))
+
+    ax5.set_title("Candidate on MJD {} at {} s in {}".format(heimdall_name.split('_')[2][:5], np.round(float(heimdall_name.split('_')[4]), 3), lilo_name))
+
+    predictor_list=['FETCH', 'BOW TIE', 'SNR']
+    for i in range(len(frb_predictor)):
+        if frb_predictor[i]:
+            ax5.text(5000+i*10000, -10, predictor_list[i], ha="center",fontsize = 20, color="navy")
+        else:
+            ax5.text(5000+i*10000, -10, predictor_list[i], ha="center",fontsize = 20, color="crimson")
 
     plt.savefig(outdir+'/B%s_'%str(burstid)+name+'.png',format='png',dpi=100)
     plt.close()
@@ -590,18 +598,6 @@ def plot_boxxed_dynspec(dynspec,best_indices,freqs,outdir,mask_chans, begin_t, a
     return
 
 def frb_plot(box_burst_dynspec,dynspec_indices,freqs,outdir,mask_chans, name, burstid):
-    """ Plots the fancy version of the boxed dynamic spectrum in pdf form
-    :param box_burst_dynspec: the dynamic spectrum of the burst
-    :param dynspec_indices: update indices from the clicking step
-    :param freqs: Nançay's frequencies
-    :param outdir: outwards directory
-    :param mask_chans: the channels with RFI-masks
-    :param name: name of the plot
-    :param burstid: burst id
-
-    :return:
-    """
-
     #plot the full dynamic spectrum, with 1d side plots, and the dm time plot
     fig = plt.figure(figsize=(12, 10))
     rows=2
@@ -670,12 +666,6 @@ def frb_plot(box_burst_dynspec,dynspec_indices,freqs,outdir,mask_chans, name, bu
 
 @njit
 def dedispersets(original_burst, frequencies, dms):
-    """ dedisperses the data based on given DM and frequencies
-    :param original_burst: DM-time spectrum of the burst
-    :param frequencies: frequncy range of Nançay
-    :param dms: DM range for dedispersion
-    :return: dedispersed DM-time spectrum
-    """
     original_burst = original_burst.T
     nt, nf = original_burst.shape
     assert nf == len(frequencies)
@@ -689,24 +679,10 @@ def dedispersets(original_burst, frequencies, dms):
     return ts
 
 def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstcounter, outdir, begin_t, plot = False):
-    """ DM-time spectrum Bow tie analysis to classify FRBs
-    :param arr_not_dedispersed: the dynamic spectrum of the burst
-    :param best_indices: update indices from the clicking step
-    :param frequencies: Nançay's frequencies
-    :param DM: Heimdall DM of burst
-    :param outdir: the channels with RFI-masks
-    :param begin_t: name of the plot
-    :param burstcounter: burst id
-    :param plot: boolean to plot the DM-time spectrum
-    :return: the power of the boxes in the bow tie in the areas of the DM-time spectrum
-    """
-
     burst_duration = ((best_indices[1]-best_indices[0])*1.6e1) # in ms
     burst_bandwidth = 4*(best_indices[3]-best_indices[2]) # in MHz
     burst_central_bandwidth = (np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]/1000) # in GHz
 
-    #calculate the size of the DM-time spectrum box height (at 2x burst duration), and trial-height (at 10x burst duration)
-    #by using the decrease in intensity due to the smearing of the burst for wrong DMs
     dmtrial_height  = max(3, int(2*burst_duration / (8.3 * burst_bandwidth * burst_central_bandwidth**(-3))))
     dm_trial        = max(15, int(10*burst_duration / (8.3 * burst_bandwidth * burst_central_bandwidth**(-3))))
     dm_trial_flag   = False
@@ -719,8 +695,6 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstco
 
     center_burst = np.flip(frequencies)[(best_indices[3]+best_indices[2])//2]
     best_indices = np.array(best_indices) + begin_t
-
-    #only dedisperse in the areas used for ratio-calculation
 
     #top_band_power
     dm_list = np.linspace(DM-dm_trial-dmtrial_height//2, DM-dm_trial+dmtrial_height//2, dmtrial_height)
@@ -741,7 +715,6 @@ def dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, DM, burstco
     print('Smallest Power Factor: ', min(power_middle/power_bottom, power_middle/power_top))
 
     if plot:
-        #the entire spectrum needs to be dedispersed for the plot
         dm_list = np.linspace(DM-dm_trial-dmtrial_height//2, DM+dm_trial+dmtrial_height//2, 128)
         dm_time = dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices,DM, 'Plot')
 
@@ -780,18 +753,6 @@ def delta_t(DM, fref, fchan):
     return 4.148808*10**6 * (fref**(-2) - fchan**(-2)) * DM
 
 def dedisperse_areas_around_burst(dm_list, dmtrial_height, arr_not_dedispersed, frequencies, center_burst, best_indices ,DM, mid_or_top):
-    """ Create the DM-time spectrum from the dispersed dynamic spectrum using the given dm_list
-    :param dm_list: range of DM values
-    :param dmtrial_height: height of the box placed
-    :param arr_not_dedispersed: dispersed dynamic spectrum
-    :param frequencies: frequency ranges of Nançay
-    :param center_burst: the center burst frequency used to straighten the burst
-    :best_indices: the coordinates of the box placed around the burst in dynamic spectrum, indicates the width of the burst
-    :param DM: Heimdall DM of burst
-    :param mid_or_top: boolean indicates if the box is placed in the middle of the dynamic spectrum or on the edges
-    :return: differs between mid_or_top plot, either the maximum intensity of the burst or of the RFI
-    """
-
     box_width = best_indices[1] - best_indices[0]
     dm_time = np.zeros((len(dm_list), arr_not_dedispersed.shape[1]), dtype=np.float32)
 

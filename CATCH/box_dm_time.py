@@ -1,9 +1,16 @@
 import pandas as pd
 from box_funcs import *
 import h5py
+import argparse
+
+parser = argparse.ArgumentParser(description="""Creates a csv, and candidates of all potential bursts.""")
+parser.add_argument('-f','--frb',type=str,required=True)
+parser.add_argument('-d','--dateobs',type=int,required=True)
+args = parser.parse_args()
 
 outdir = '/data/konijn/R117_analysis/candidates'
-lilo_targets = ['60058', '60056', '60054', '60051', '60049', '60047', '60044', '60042', '60040', '60036', '60033', '60030', '60026', '60023', '60021', '60020', '60019', '60016', '60014', '60012', '60011', '60007', '59935', '59931', '59927', '59925', '59923', '59921', '59919', '59917', '59912', '59911', '59909', '59907', '59906', '59904', '59903', '59901', '59900', '59899', '59898', '59897', '59894', '59893', '59892', '59891', '59890', '59889', '59888', '59887', '59885', '59884', '59883', '59882', '59881', '59879', '59878', '59877', '59876', '59875', '59874', '59873', '59871', '59870', '59869', '59867']
+lilo_frb = args.frb
+lilo_targets = [str(args.dateobs)]
 df = pd.DataFrame(columns=['lilo name', 'cand name',])
 
 candidate_counter = 0
@@ -12,13 +19,13 @@ for j in range(len(lilo_targets)):
     lilo_number = lilo_targets[j]
 
     #identify each Heimdall candidate belonging to a specific file
-    burst_cands, prob_array = candidate_lilo_link(lilo_number)
+    burst_cands, prob_array = candidate_lilo_link(lilo_number,lilo_frb)
 
     if burst_cands == 'Empty File':
         continue
 
     #remove candidates within 100ms of eachother
-    burst_cands, prob_array = remove_duplicate_candidates(burst_cands, prob_array, lilo_number)
+    burst_cands, prob_array = remove_duplicate_candidates(burst_cands, prob_array, lilo_number,lilo_frb)
 
     for i in range(len(burst_cands)):
         print("Analysis on burst ",candidate_counter," in: ", burst_cands[i][0][-17:], 'in', burst_cands[i][3])
@@ -34,8 +41,8 @@ for j in range(len(lilo_targets)):
         smaller_width = False
 
         lilo_name = fil_file.split('/')[-1][:-4]
-        mask_file = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/"+lilo_name+"/"+lilo_name+"_badchans.txt"
-        candidate_h5 = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/ash/"+burst_cands[i][3]
+        mask_file = "/data/hewitt/eclat/"+lilo_frb+"/"+lilo_number+"/"+lilo_name+"/"+lilo_name+"_badchans.txt"
+        candidate_h5 = "/data/hewitt/eclat/"+lilo_frb+"/"+lilo_number+"/ash/"+burst_cands[i][3]
 
         #open the .h5 file
         with h5py.File(candidate_h5, "r") as f:
@@ -60,7 +67,7 @@ for j in range(len(lilo_targets)):
         best_box = dm_time_toa(arr_not_dedispersed, frequencies, dm, bt, tsamp, heimdall_width)
 
         #box the candidate
-        best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], plot = True)
+        best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], lilo_name, plot = False)
 
         #label the candidate
         power_top, power_middle, power_bottom, dm_trial_flag, smallest_power_factor = dm_time_analysis(arr_not_dedispersed, best_indices, frequencies, dm, burstid, outdir, begin_t, plot = False)
@@ -69,8 +76,10 @@ for j in range(len(lilo_targets)):
             bowtie_prediction = True
 
         if bowtie_prediction == True or fetch_prediction == True or snr > 200:
+            frb_predictor = [bowtie_prediction, fetch_prediction, snr > 200]
+
             dynspec, tsamp, freqres, begbin, frequencies, bt, arr_not_dedispersed, begin_t= loaddata(fil_file, start_pulse, DM=dm, maskfile=mask_file, window=150)
-            box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], plot = True)
+            box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], lilo_name, frb_predictor, plot = True)
 
         df.loc[burstid,'lilo name'] = lilo_name
         df.loc[burstid,'cand name'] = burst_cands[i][3]

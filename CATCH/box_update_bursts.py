@@ -3,22 +3,23 @@ import numpy as np
 from box_funcs import *
 import time
 
-outdir = '/data/konijn/R117_analysis/candidates'
+outdir = '/data/hewitt/eclat/RNarwhal/60090/catch/'
 burst_csv = pd.read_csv('burst_parameters.csv')
 selected_truths = pd.read_csv('selected_burst_truths.csv')
 
-lilo_targets = ['60058', '60056', '60054', '60051', '60049', '60047', '60044', '60042', '60040', '60036', '60033', '60030', '60026', '60023', '60021', '60020', '60019', '60016', '60014', '60012', '60011', '60007', '59935', '59931', '59927', '59925', '59923', '59921', '59919', '59917', '59912', '59911', '59909', '59907', '59906', '59904', '59903', '59901', '59900', '59899', '59898', '59897', '59894', '59893', '59892', '59891', '59890', '59889', '59888', '59887', '59885', '59884', '59883', '59882', '59881', '59879', '59878', '59877', '59876', '59875', '59874', '59873', '59871', '59870', '59869', '59867']
+lilo_targets = ['60090']
+
 candidate_counter = 0
 
 for j in range(len(lilo_targets)):
     lilo_number = lilo_targets[j]
 
-    burst_cands, prob_array, label_array = candidate_lilo_link(lilo_number)
+    burst_cands, prob_array, label_array = candidate_lilo_link(lilo_number,lilo_frb)
 
     if burst_cands == 'Empty File':
         continue
 
-    burst_cands, prob_array = remove_duplicate_candidates(burst_cands, prob_array, lilo_number)
+    burst_cands, prob_array = remove_duplicate_candidates(burst_cands, prob_array, lilo_number,lilo_frb)
 
     for i in range(len(burst_cands)):
         if 'B' + str(candidate_counter) in np.array(selected_truths['Cand']):
@@ -37,8 +38,8 @@ for j in range(len(lilo_targets)):
                 downsampled = False
 
                 lilo_name = fil_file.split('/')[-1][:-4]
-                mask_file = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/"+lilo_name+"/"+lilo_name+"_badchans.txt"
-                candidate_h5 = "/data/hewitt/eclat/RNarwhal/"+lilo_number+"/ash/"+burst_cands[i][3]
+                mask_file = "/data/hewitt/eclat/"+lilo_frb+'/'+lilo_number+"/"+lilo_name+"/"+lilo_name+"_badchans.txt"
+                candidate_h5 = "/data/hewitt/eclat/"+lilo_frb+'/'+lilo_number+"/ash/"+burst_cands[i][3]
 
                 with h5py.File(candidate_h5, "r") as f:
                     heimdall_width = f.attrs["width"]
@@ -55,7 +56,7 @@ for j in range(len(lilo_targets)):
 
                 dynspec, tsamp, freqres, begbin, frequencies, bt, arr_not_dedispersed, begin_t= loaddata(fil_file, start_pulse, DM=dm, maskfile=mask_file, window = 150)
                 best_box = dm_time_toa(arr_not_dedispersed, frequencies, dm, bt, tsamp, heimdall_width)
-                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], plot = False, fancyplot = True)
+                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3],lilo_name, plot = False, fancyplot = True)
 
                 burst_csv.loc[burstid,'time width']=best_indices[1]-best_indices[0]
                 burst_csv.loc[burstid,'freq width']=best_indices[3]-best_indices[2]
@@ -115,7 +116,7 @@ for j in range(len(lilo_targets)):
                         best_indices[3] += 1
 
                 #box the candidate
-                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], best_indices, dedicated_y_range = True, plot = False, fancyplot = True)
+                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], lilo_name, best_indices, dedicated_y_range = True, plot = False, fancyplot = True)
 
                 burst_csv.loc[burstid,'time width']=best_indices[1]-best_indices[0]
                 burst_csv.loc[burstid,'freq width']=best_indices[3]-best_indices[2]
@@ -160,7 +161,7 @@ for j in range(len(lilo_targets)):
                 #load the candidate
                 dynspec, tsamp, freqres, begbin, frequencies, bt, arr_not_dedispersed, begin_t= loaddata(fil_file, start_pulse, DM=dm, maskfile=mask_file, window = 150)
                 best_box = dm_time_toa(arr_not_dedispersed, frequencies, dm, bt, tsamp, heimdall_width)
-                box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], plot = False, fancyplot = True)
+                box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], lilo_name, plot = False, fancyplot = True)
 
                 burstid = candidate_counter + 0.5
                 mask_chans = np.unique(np.where(dynspec== 0)[0])
@@ -182,7 +183,7 @@ for j in range(len(lilo_targets)):
                 best_box = [best_indices[0] + begin_t, best_indices[1] + begin_t]
 
                 #box the candidate
-                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], best_indices, dedicated_y_range = True, plot = False, fancyplot= True)
+                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], lilo_name, best_indices, dedicated_y_range = True, plot = False, fancyplot= True)
 
                 burst_csv.loc[burstid,'lilo name'] = lilo_name
                 burst_csv.loc[burstid,'cand name'] = '_'.join(burst_cands[i][3].split('_')[:4] + [str(time_new)] + ['dm'] + burst_cands[i][3].split('_')[6:])
@@ -247,7 +248,7 @@ for j in range(len(lilo_targets)):
                         best_indices[3] += 1
 
                 #box the candidate
-                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3],best_indices, dedicated_y_range = True, plot = False, fancyplot = True)
+                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3],lilo_name, best_indices, dedicated_y_range = True, plot = False, fancyplot = True)
 
                 burst_csv.loc[burstid,'time width']=best_indices[1]-best_indices[0]
                 burst_csv.loc[burstid,'freq width']=best_indices[3]-best_indices[2]
@@ -275,7 +276,7 @@ for j in range(len(lilo_targets)):
                 best_box = [best_indices[0] + begin_t, best_indices[1] + begin_t]
 
                 #box the candidate
-                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], best_indices, dedicated_y_range = True, plot = False, fancyplot = True)
+                best_indices, snr, fluence = box_burst(burstid, dynspec, best_box, heimdall_width, tsamp, freqres, frequencies, outdir, begin_t, arr_not_dedispersed, dm, downsampled, burst_cands[i][3], lilo_name, best_indices, dedicated_y_range = True, plot = False, fancyplot = True)
 
                 burst_csv.loc[burstid,'lilo name'] = lilo_name
                 burst_csv.loc[burstid,'cand name'] = '_'.join(burst_cands[i][3].split('_')[:4] + [str(time_new)] + ['dm'] + burst_cands[i][3].split('_')[6:])
