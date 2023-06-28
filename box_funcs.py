@@ -93,17 +93,6 @@ def box_burst(burstid, dynspec, best_box, heimdall_width, tres, fres, freqs, new
     else:
         box_x_l = best_indices[0]
         box_x_r = best_indices[1]
-        max_value = 0
-
-        for i in range(40):
-            for j in range(40):
-                box_x_l = best_indices[0] + 3*(i-20)
-                box_x_r = best_indices[1] + 3*(j-20)
-
-                box_intens=(np.sum(box_burst_dynspec[box_y_b:box_y_t,box_x_l:box_x_r])/((box_x_r-box_x_l)*(box_y_t-box_y_b))**(0.5))
-                if box_intens >= max_value:
-                    max_value = box_intens
-                    best_indices = [box_x_l,box_x_r,box_y_b,box_y_t]
 
     profile_burst = np.mean(converted_snr_burst[best_indices[2]:best_indices[3],best_indices[0]:best_indices[1]], axis=0)
     profile_off = np.mean(off_burst[best_indices[2]:best_indices[3],best_indices[0]-best_indices[1]:], axis=0)
