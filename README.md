@@ -7,8 +7,13 @@ A new pipeline is therefore created called the Classification Algorithm and Tran
 
 ## Code structure
 The necessary code to run CATCH is in the CATCH folder:
+
 `box_dm_time.py` is the main file which runs the entire pipeline. It takes information from the completed `eclat` pipeline.
+
 `box_funcs.py` is the file which contains all the functions called in the `box_dm_time.py` file. 
+
 `box_interactive_click.py` is the optional script one can call, which opens a set of figures, in which one can interactively click on certain parts to indicate the bursts. It creates a new CSV containing the locations of the bursts in the spectrum. 
+
 `box_update_bursts.py` runs from the updated CSV, and updates the location, energy, size, and S/N for each burst.
+
 `R117 Analysis Nancay.ipynb` is a notebook containing the complete analysis of FRB 20220912A for the MSc Thesis of D. Konijn.
